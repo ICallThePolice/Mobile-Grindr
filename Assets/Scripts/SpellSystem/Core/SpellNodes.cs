@@ -118,7 +118,7 @@ namespace SpellSystem.Core
     // УЗЕЛ 2: КРУГ (АОЕ)
     public class CircleNode : SpellNode
     {
-        private SpellAoE aoePrefab;
+        private SpellAoE aoePrefab; // <--- Вот это поле должно быть объявлено
 
         public CircleNode(SpellAoE prefab, EnergyDataSO energy)
         {
@@ -128,26 +128,25 @@ namespace SpellSystem.Core
 
         public override void Execute(SpellContext context)
         {
-            // Умный выбор точки взрыва:
-            // 1. Если есть точка от предыдущего узла (HitPosition) — используем её.
-            // 2. Если есть залоченная цель (Target) — взрываемся прямо НА НЕЙ!
-            // 3. Если ничего нет — спавним перед кастером.
             Vector3 spawnPos = Vector3.zero;
 
-            if (context.HitPosition != Vector3.zero)
-            {
-                spawnPos = context.HitPosition;
-            }
-            else if (context.Target != null)
+            // 1. ПРИОРИТЕТ: Если у нас есть захваченная цель, спавним АоЕ прямо на ней
+            if (context.Target != null)
             {
                 spawnPos = context.Target.position;
             }
+            // 2. ВТОРИЧНО: Если цели нет, но есть HitPosition (например, от попавшего снаряда)
+            else if (context.HitPosition != Vector3.zero)
+            {
+                spawnPos = context.HitPosition;
+            }
+            // 3. ПО УМОЛЧАНИЮ: Спавним перед кастером
             else if (context.Caster != null)
             {
                 spawnPos = context.Caster.position + context.Caster.forward * 3f;
             }
 
-            spawnPos.y += 0.1f;
+            spawnPos.y += 0.1f; // Небольшой оффсет, чтобы не проваливалось под пол
 
             float damage = LayerEnergy != null ? LayerEnergy.baseDamage * 1.2f : 15f;
             float radius = 6f;
@@ -170,7 +169,7 @@ namespace SpellSystem.Core
                 aoe.Initialize(damage, radius, LayerEnergy);
             }
 
-            Debug.Log($"[CircleNode] Взрыв AoE в точке {spawnPos}. Найдено целей в радиусе: {context.HitTargets.Count}");
+            Debug.Log($"[CircleNode] Взрыв AoE в точке {spawnPos}. Целей: {context.HitTargets.Count}");
 
             TriggerNextPhaseForEachTarget(context, requireTargets: true);
         }

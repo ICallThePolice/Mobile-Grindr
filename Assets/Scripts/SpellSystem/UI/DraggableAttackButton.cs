@@ -1,83 +1,39 @@
 using UnityEngine;
 using UnityEngine.EventSystems;
-using UnityEngine.UI;
-using SpellSystem.Core;
 
 namespace SpellSystem.UI
 {
-    [RequireComponent(typeof(Button))]
     public class DraggableAttackButton : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler
     {
-        [Header("Settings")]
-        [SerializeField] private Canvas canvas;
-
         private RectTransform rectTransform;
-        private CanvasGroup canvasGroup;
-        private Vector3 originalPosition;
-        private Transform originalParent;
-        private SpellCaster cachedCaster; // Кэш
-
-        [HideInInspector] public bool isDragging = false;
+        private Vector3 startPosition;
+        private Canvas parentCanvas;
 
         private void Awake()
         {
             rectTransform = GetComponent<RectTransform>();
-            canvasGroup = GetComponent<CanvasGroup>();
-            if (canvasGroup == null) canvasGroup = gameObject.AddComponent<CanvasGroup>();
-
-            if (canvas == null)
-            {
-                canvas = GetComponentInParent<Canvas>();
-            }
-
-            cachedCaster = FindAnyObjectByType<SpellCaster>();
+            parentCanvas = GetComponentInParent<Canvas>();
         }
 
         public void OnBeginDrag(PointerEventData eventData)
         {
-            if (cachedCaster == null) cachedCaster = FindAnyObjectByType<SpellCaster>();
+            // Запоминаем позицию, чтобы вернуться, если бросили не туда
+            startPosition = rectTransform.anchoredPosition;
 
-            if (cachedCaster == null || !cachedCaster.HasActiveCombo())
-            {
-                eventData.pointerDrag = null;
-                return;
-            }
-
-            isDragging = true;
-            originalPosition = rectTransform.anchoredPosition;
-            originalParent = transform.parent;
-
-            transform.SetParent(canvas.transform, true);
+            // Чтобы кнопка "всплыла" над остальным UI при перетаскивании
             transform.SetAsLastSibling();
-
-            canvasGroup.alpha = 0.6f;
-            canvasGroup.blocksRaycasts = false;
         }
 
         public void OnDrag(PointerEventData eventData)
         {
-            if (!isDragging) return;
-
-            if (canvas != null && RectTransformUtility.ScreenPointToLocalPointInRectangle(
-                canvas.transform as RectTransform,
-                eventData.position,
-                canvas.worldCamera,
-                out Vector2 localPoint))
-            {
-                rectTransform.anchoredPosition = localPoint;
-            }
+            // Двигаем кнопку за курсором/пальцем
+            rectTransform.anchoredPosition += eventData.delta / parentCanvas.scaleFactor;
         }
 
         public void OnEndDrag(PointerEventData eventData)
         {
-            if (!isDragging) return;
-
-            isDragging = false;
-            canvasGroup.alpha = 1f;
-            canvasGroup.blocksRaycasts = true;
-
-            transform.SetParent(originalParent, true);
-            rectTransform.anchoredPosition = originalPosition;
+            // Возвращаем кнопку на место (возврат будет "отменен" методом OnDrop в SealedSlotUI)
+            rectTransform.anchoredPosition = startPosition;
         }
     }
 }
