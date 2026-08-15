@@ -1,0 +1,23 @@
+fileFormatVersion: 2
+guid: 77c518f43d1aac747827eeb9067a9247
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences:
+  - runeDrawer: {instanceID: 0}
+  - lockOnTarget: {instanceID: 0}
+  - vitalEnergy: {fileID: 11400000, guid: e849a8194e1335e438309b0ff975cccf, type: 2}
+  - psyEnergy: {fileID: 11400000, guid: 70c0e6e960f25c64ba177f21c19ae2a2, type: 2}
+  - erebEnergy: {fileID: 11400000, guid: 78a47978633c0574a971fddbfe5c7ed2, type: 2}
+  - triangleShape: {fileID: 11400000, guid: 1fa7fabf319dd95419e0d3fb4858ad2b, type: 2}
+  - circleShape: {fileID: 11400000, guid: dda4738d1d3d16f45a8344243339431e, type: 2}
+  - squareShape: {fileID: 11400000, guid: a25d45d2ca1e2ea4c947d3c63cf3ed7a, type: 2}
+  - projectilePrefab: {instanceID: 0}
+  - aoePrefab: {instanceID: 0}
+  - shieldPrefab: {instanceID: 0}
+  - castPoint: {instanceID: 0}
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
