@@ -15,5 +15,5 @@ MonoBehaviour:
   shapeType: 1
   shapeName: "\u041A\u0440\u0443\u0433 (\u0410\u043E\u0415)"
   shapeIcon: {fileID: 0}
-  baseRadius: 5
-  maxRange: 20
+  baseRadius: 20
+  maxRange: 30

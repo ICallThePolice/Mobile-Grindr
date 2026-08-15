@@ -34,6 +34,7 @@ namespace SpellSystem.Core
         [SerializeField] private SpellProjectile projectilePrefab;
         [SerializeField] private SpellAoE aoePrefab;
         [SerializeField] private SpellShield shieldPrefab;
+        [SerializeField] private SpellTotem totemPrefab;
 
         private EnergyDataSO currentEnergy;
         private List<ComboStep> currentCombo = new List<ComboStep>();
@@ -99,7 +100,23 @@ namespace SpellSystem.Core
             }
         }
 
-        // Вызывается по кнопке "Атака"
+        // Устанавливает цель из системы прицеливания
+        private bool isHardLocked = false;
+
+        // Обновленный метод установки цели с флагом жесткого лока
+        public void SetTarget(Transform target, bool hardLocked)
+        {
+            lockOnTarget = target;
+            isHardLocked = hardLocked;
+        }
+
+        // Перегрузка для совместимости
+        public void SetTarget(Transform target)
+        {
+            lockOnTarget = target;
+            isHardLocked = false;
+        }
+
         // Вызывается по кнопке "Атака"
         public void CastCurrentCombo()
         {
@@ -109,17 +126,74 @@ namespace SpellSystem.Core
                 return;
             }
 
-            float rankMultiplier = 1f + (currentCombo.Count - 1) * 0.5f;
+            ExecuteComboChain(currentCombo);
+        }
 
-            // Выпускаем заклинания
-            foreach (var step in currentCombo)
+        // Запускает каст конкретного сохраненного в слоте комбо
+        public void CastSealedCombo(List<SpellCaster.ComboStep> comboToCast)
+        {
+            if (comboToCast == null || comboToCast.Count == 0) return;
+
+            ExecuteComboChain(comboToCast);
+        }
+
+        // ГЛАВНЫЙ МЕТОД: ЗАПУСК ЦЕПОЧКИ
+        private void ExecuteComboChain(List<ComboStep> combo)
+        {
+            // 1. Собираем цепочку и получаем первый (корневой) узел
+            SpellNode rootNode = BuildSpellChain(combo);
+            if (rootNode == null) return;
+
+            // 2. Создаем стартовый контекст
+            Vector3 startPos = castPoint != null ? castPoint.position : (transform.position + transform.forward);
+            SpellContext initialContext = new SpellContext
             {
-                ExecuteSingleSpell(step.shape, step.energy, rankMultiplier);
+                Caster = this.transform,
+                HitPosition = startPos,
+                Direction = transform.forward,
+                Target = lockOnTarget,
+                IsHardLocked = isHardLocked
+            };
+
+            // 3. Запускаем магию!
+            rootNode.Execute(initialContext);
+        }
+
+        // ФАБРИКА УЗЛОВ (Собирает цепочку с конца в начало)
+        private SpellNode BuildSpellChain(List<ComboStep> combo)
+        {
+            SpellNode nextNode = null;
+
+            // Идем с конца списка к началу
+            for (int i = combo.Count - 1; i >= 0; i--)
+            {
+                ComboStep step = combo[i];
+                SpellNode currentNode = CreateNodeForShape(step.shape, step.energy);
+
+                if (currentNode != null)
+                {
+                    // Указываем текущему узлу, кто идет после него
+                    currentNode.NextNode = nextNode;
+
+                    // Теперь текущий узел становится "следующим" для предыдущего шага цикла
+                    nextNode = currentNode;
+                }
             }
 
-            // ВАЖНО: Мы НЕ вызываем здесь ResetCombo()!
-            // Комбо и печать остаются активными для повторных выстрелов.
-            // Сброс происходит только по кнопке "Сброс" (ResetCombo).
+            // Возвращаем самый первый узел (он стал nextNode на последней итерации цикла)
+            return nextNode;
+        }
+
+        // Метод, который решает, какой именно класс узла создать
+        private SpellNode CreateNodeForShape(ShapeType shape, EnergyDataSO energy)
+        {
+            return shape switch
+            {
+                ShapeType.Triangle => new TriangleNode(projectilePrefab, energy),
+                ShapeType.Circle => new CircleNode(aoePrefab, energy),
+                ShapeType.Square => new SquareNode(shieldPrefab, totemPrefab, energy), // <--- Передаем totemPrefab
+                _ => null
+            };
         }
 
         // Вызывается по кнопке "Сброс" (Reset)
@@ -128,44 +202,6 @@ namespace SpellSystem.Core
             currentCombo.Clear();
             if (sealUI != null) sealUI.ClearAllSlots();
             Debug.Log("[SpellCaster] Печать и комбинация сброшены!");
-        }
-
-        private void ExecuteSingleSpell(ShapeType shape, EnergyDataSO energy, float rankMultiplier)
-        {
-            if (energy == null) return;
-
-            float finalDamage = energy.baseDamage * rankMultiplier;
-            Vector3 spawnPos = castPoint != null ? castPoint.position : (transform.position + transform.forward);
-
-            switch (shape)
-            {
-                case ShapeType.Triangle:
-                    if (projectilePrefab != null)
-                    {
-                        var proj = Instantiate(projectilePrefab, spawnPos, transform.rotation);
-                        proj.Initialize(finalDamage, energy, lockOnTarget);
-                    }
-                    break;
-
-                case ShapeType.Circle:
-                    Vector3 aoePos = lockOnTarget != null ? lockOnTarget.position : (transform.position + transform.forward * 4f);
-                    aoePos.y = transform.position.y + 0.1f;
-
-                    if (aoePrefab != null)
-                    {
-                        var aoe = Instantiate(aoePrefab, aoePos, Quaternion.identity);
-                        aoe.Initialize(finalDamage, 4f, energy);
-                    }
-                    break;
-
-                case ShapeType.Square:
-                    if (shieldPrefab != null)
-                    {
-                        var shield = Instantiate(shieldPrefab, transform.position, Quaternion.identity, transform);
-                        shield.Initialize(transform, energy);
-                    }
-                    break;
-            }
         }
 
         // Проверяет, есть ли активное комбо для перетаскивания
@@ -179,21 +215,5 @@ namespace SpellSystem.Core
         {
             return new List<SpellCaster.ComboStep>(currentCombo);
         }
-
-        // Запускает каст конкретного сохраненного в слоте комбо
-        public void CastSealedCombo(List<SpellCaster.ComboStep> comboToCast)
-        {
-            if (comboToCast == null || comboToCast.Count == 0) return;
-
-            float rankMultiplier = 1f + (comboToCast.Count - 1) * 0.5f;
-
-            foreach (var step in comboToCast)
-            {
-                ExecuteSingleSpell(step.shape, step.energy, rankMultiplier);
-            }
-        }
-
     }
-
-
 }

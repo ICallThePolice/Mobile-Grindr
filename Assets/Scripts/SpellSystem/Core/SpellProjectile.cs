@@ -1,58 +1,98 @@
+using System;
 using UnityEngine;
 using SpellSystem.Data;
+using SpellSystem.Testing;
 
 namespace SpellSystem.Core
 {
+    [RequireComponent(typeof(Rigidbody), typeof(Collider))]
     public class SpellProjectile : MonoBehaviour
     {
-        [Header("Movement")]
-        [SerializeField] private float speed = 25f;
+        public event Action<Vector3, Transform> OnImpact;
+
+        [Header("Settings")]
+        [SerializeField] private float speed = 20f;
         [SerializeField] private float lifetime = 5f;
+        [Tooltip("Скорость доводки на цель. 0 - летит прямо, 50 - резкий поворот")]
+        [SerializeField] private float homingSensitivity = 10f;
 
         private float damage;
         private EnergyDataSO energyData;
-        private Transform target;
+        private Rigidbody rb;
+        private Transform homingTarget; // Сохраненная цель
 
-        public void Initialize(float spellDamage, EnergyDataSO energy, Transform targetTransform)
+        private void Awake()
         {
-            damage = spellDamage;
-            energyData = energy;
-            target = targetTransform;
+            rb = GetComponent<Rigidbody>();
+            rb.isKinematic = false;
+            rb.useGravity = false;
+            rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
 
+            GetComponent<Collider>().isTrigger = true;
             Destroy(gameObject, lifetime);
-
-            // Окрашиваем детские объекты/свет в цвет выбранной энергии
-            var lightComp = GetComponentInChildren<Light>();
-            if (lightComp != null) lightComp.color = energy.primaryColor;
         }
 
-        private void Update()
+        // Добавили параметр sourceTarget
+        public void Initialize(float damage, EnergyDataSO energy, Transform target = null, Transform sourceTarget = null)
         {
-            if (target != null)
+            this.damage = damage;
+            this.energyData = energy;
+            this.homingTarget = target;
+
+            if (energy != null)
             {
-                // Наведение на залоченную цель
-                Vector3 dir = (target.position + Vector3.up - transform.position).normalized;
-                transform.forward = Vector3.Lerp(transform.forward, dir, Time.deltaTime * 10f);
+                var rend = GetComponent<Renderer>();
+                if (rend != null) rend.material.color = energy.primaryColor;
             }
 
-            transform.position += transform.forward * (speed * Time.deltaTime);
+            // ИГНОРИРУЕМ КОЛЛИЗИЮ с источником (работает для любых размеров мешей и коллайдеров)
+            if (sourceTarget != null)
+            {
+                Collider projCollider = GetComponent<Collider>();
+                Collider[] sourceColliders = sourceTarget.GetComponentsInChildren<Collider>();
+
+                foreach (var sourceCol in sourceColliders)
+                {
+                    if (sourceCol != null && projCollider != null)
+                    {
+                        Physics.IgnoreCollision(projCollider, sourceCol, true);
+                    }
+                }
+            }
+
+            rb.linearVelocity = transform.forward * speed;
+        }
+
+        // Используем FixedUpdate для плавной физической доводки
+        private void FixedUpdate()
+        {
+            if (homingTarget != null && rb != null)
+            {
+                // Находим направление к цели
+                Vector3 directionToTarget = (homingTarget.position - transform.position).normalized;
+
+                // Плавно смешиваем текущий вектор полета с вектором на цель
+                Vector3 newDirection = Vector3.Slerp(rb.linearVelocity.normalized, directionToTarget, homingSensitivity * Time.fixedDeltaTime);
+
+                // Применяем новую скорость и поворачиваем нос снаряда по курсу
+                rb.linearVelocity = newDirection * speed;
+                transform.rotation = Quaternion.LookRotation(rb.linearVelocity);
+            }
         }
 
         private void OnTriggerEnter(Collider other)
         {
-            // Проверка попадания во врага или преграду
-            if (other.CompareTag("Enemy") || other.CompareTag("Environment"))
-            {
-                // Эффект попадания (Impact VFX)
-                if (energyData != null && energyData.impactVfxPrefab != null)
-                {
-                    Instantiate(energyData.impactVfxPrefab, transform.position, Quaternion.identity);
-                }
+            if (other.CompareTag("Player")) return;
 
-                Debug.Log($"<color=red>[ПАКЕТ УРОНА]</color> {other.name} получил {damage:F1} урона стихией {energyData?.energyName}");
+            DummyTarget target = other.GetComponent<DummyTarget>();
+            if (target == null) return;
 
-                Destroy(gameObject);
-            }
+            string energyName = energyData != null ? energyData.energyName : "Без энергии";
+            target.TakeDamage(damage, energyName);
+
+            OnImpact?.Invoke(transform.position, other.transform);
+
+            Destroy(gameObject);
         }
     }
 }

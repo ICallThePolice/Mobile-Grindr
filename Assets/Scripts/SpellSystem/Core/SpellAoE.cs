@@ -1,5 +1,6 @@
 using UnityEngine;
 using SpellSystem.Data;
+using SpellSystem.Testing; // Подключаем пространство имен манекенов
 
 namespace SpellSystem.Core
 {
@@ -19,13 +20,13 @@ namespace SpellSystem.Core
         public void Initialize(float spellDamage, float radius, EnergyDataSO energy)
         {
             damage = spellDamage;
-            targetRadius = Mathf.Max(radius, 2.0f); // Защита от 0 радиуса
+            targetRadius = Mathf.Max(radius, 2.0f); // Защита от 0 радиуса[cite: 9]
             energyData = energy;
 
-            // Устанавливаем начальный плоский размер
+            // Устанавливаем начальный плоский размер[cite: 9]
             transform.localScale = new Vector3(0.1f, ringHeight, 0.1f);
 
-            // Окрашиваем материал зоны в цвет выбранной энергии
+            // Окрашиваем материал зоны в цвет выбранной энергии[cite: 9]
             var renderer = GetComponent<Renderer>();
             if (renderer != null && energy != null)
             {
@@ -35,7 +36,7 @@ namespace SpellSystem.Core
 
         private void Update()
         {
-            // Плавное расширение круга в плоскости земли (X и Z)
+            // Плавное расширение круга в плоскости земли (X и Z)[cite: 9]
             if (currentRadius < targetRadius)
             {
                 currentRadius += expandSpeed * Time.deltaTime;
@@ -51,14 +52,23 @@ namespace SpellSystem.Core
         {
             hasTriggered = true;
 
-            // Поиск всех врагов внутри радиуса
+            // Поиск всех врагов внутри радиуса[cite: 9]
             Collider[] hitEnemies = Physics.OverlapSphere(transform.position, targetRadius / 2f, enemyLayer);
-            foreach (var enemy in hitEnemies)
+
+            foreach (var enemyCollider in hitEnemies)
             {
-                Debug.Log($"<color=red>[AoE УРОН]</color> {enemy.name} получил {damage:F1} урона от {energyData?.energyName}");
+                // Ищем компонент манекена на объекте и наносим ему урон
+                DummyTarget target = enemyCollider.GetComponent<DummyTarget>();
+                if (target != null)
+                {
+                    string energyName = energyData != null ? energyData.energyName : "Энергия";
+
+                    // Реальное нанесение урона (теперь ХП манекена будет уменьшаться)
+                    target.TakeDamage(damage, energyName);
+                }
             }
 
-            // Исчезновение
+            // Исчезновение[cite: 9]
             Destroy(gameObject, 0.3f);
         }
     }
