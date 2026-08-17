@@ -12,25 +12,18 @@ namespace SpellSystem.UI
     public class RuneDrawer : MonoBehaviour
     {
         [Header("Drawing Area / UI Zone")]
-        [Tooltip("RectTransform UI-панели, в которой разрешено рисовать")]
         [SerializeField] private RectTransform drawingZone;
-
-        [Tooltip("Image компонента рамки/фона для подсветки при касании")]
         [SerializeField] private Image zoneImage;
-
-        [Tooltip("Прозрачность фоновой рамки в покое")]
         [SerializeField] private Color zoneIdleColor = new Color(0.1f, 0.1f, 0.15f, 0.2f);
-
-        [Tooltip("Скорость плавного загорания/затухания подсветки")]
         [SerializeField] private float glowFadeSpeed = 12f;
 
         [Header("Settings")]
         [SerializeField] private Camera uiCamera;
         [SerializeField] private float minPointDistance = 10f;
-        [SerializeField] private float trailLifetime = 0.4f;
+        [SerializeField] private float trailLifetime = 1.5f;
 
         [Header("Slicer Width Settings")]
-        [SerializeField] private float maxLineWidth = 0.25f;
+        [SerializeField] private float maxLineWidth = 0.03f;
         [SerializeField] private float dotScaleMultiplier = 1.2f;
 
         [Header("Leading Energy Dot")]
@@ -38,7 +31,6 @@ namespace SpellSystem.UI
         [SerializeField] private SpriteRenderer leadingDotRenderer;
 
         public event Action<ShapeType, float> OnShapeRecognized;
-
         public event Action OnDrawingStarted;
         public event Action OnDrawingEnded;
 
@@ -54,10 +46,11 @@ namespace SpellSystem.UI
         private List<PointData> visualPoints = new List<PointData>();
 
         private bool isDrawing = false;
-        private bool isOutsideZone = false; // Флаг: вылетел ли палец за пределы зоны во время штриха
+        private bool isOutsideZone = false;
         private Color currentColor = Color.white;
         private Color zoneActiveColor = new Color(1f, 1f, 1f, 0.4f);
         private Canvas parentCanvas;
+        private float currentLineAlpha = 1f;
 
         private void Awake()
         {
@@ -77,6 +70,7 @@ namespace SpellSystem.UI
         private void SetupLineRenderer()
         {
             lineRenderer.positionCount = 0;
+            // ВОЗВРАЩАЕМ В 3D ПРОСТРАНСТВО
             lineRenderer.useWorldSpace = true;
             lineRenderer.numCapVertices = 5;
             lineRenderer.numCornerVertices = 5;
@@ -129,7 +123,9 @@ namespace SpellSystem.UI
             return tex;
         }
 
-        private void Update()
+        // ИСПРАВЛЕНИЕ: Используем LateUpdate вместо Update.
+        // Теперь рисование происходит строго ПОСЛЕ того, как камера переместилась за персонажем.
+        private void LateUpdate()
         {
             HandleInput();
             UpdateVisualTrail();
@@ -156,44 +152,30 @@ namespace SpellSystem.UI
 
                 if (!inside)
                 {
-                    // Вылетели из зоны: ставим на паузу, но НЕ сбрасываем точки!
                     isOutsideZone = true;
                     if (leadingDot != null) leadingDot.gameObject.SetActive(false);
                 }
                 else
                 {
-                    // Внутри зоны: если возвращаемся с улицы — снимаем с паузы
                     if (isOutsideZone)
                     {
                         isOutsideZone = false;
                         if (leadingDot != null) leadingDot.gameObject.SetActive(true);
                     }
-
                     ContinueDrawing(pointerPos);
                 }
             }
             else if (pointer.press.wasReleasedThisFrame && isDrawing)
             {
-                // Если отпустили за пределами зоны — сброс. Если внутри — распознаем!
-                if (isOutsideZone)
-                {
-                    CancelDrawing();
-                }
-                else
-                {
-                    EndDrawing();
-                }
+                if (isOutsideZone) CancelDrawing();
+                else EndDrawing();
             }
         }
 
         private bool IsPositionInsideZone(Vector2 screenPos)
         {
             if (drawingZone == null) return true;
-
-            if (IsPointerOverButton(screenPos))
-            {
-                return false;
-            }
+            if (IsPointerOverButton(screenPos)) return false;
 
             if (parentCanvas == null) parentCanvas = drawingZone.GetComponentInParent<Canvas>();
 
@@ -207,10 +189,8 @@ namespace SpellSystem.UI
             {
                 float radius = drawingZone.rect.width / 2f;
                 Vector2 centerOffset = localPoint - drawingZone.rect.center;
-
                 return centerOffset.sqrMagnitude <= (radius * radius);
             }
-
             return false;
         }
 
@@ -228,11 +208,20 @@ namespace SpellSystem.UI
 
             foreach (var result in results)
             {
+                // Игнорируем саму панель рисования (фон)
                 if (result.gameObject != null && result.gameObject != drawingZone.gameObject)
                 {
-                    if (result.gameObject.GetComponentInParent<UnityEngine.UI.Selectable>() != null)
+                    GameObject go = result.gameObject;
+
+                    // ИСПРАВЛЕНИЕ: Теперь мы проверяем не только стандартные кнопки (Selectable),
+                    // но и любые объекты, которые умеют нажиматься (IPointerDownHandler, IPointerClickHandler)
+                    // или перетаскиваться (IBeginDragHandler) — то есть наши кастомные слоты и джойстик!
+                    if (go.GetComponentInParent<UnityEngine.UI.Selectable>() != null ||
+                        go.GetComponentInParent<UnityEngine.EventSystems.IPointerDownHandler>() != null ||
+                        go.GetComponentInParent<UnityEngine.EventSystems.IPointerClickHandler>() != null ||
+                        go.GetComponentInParent<UnityEngine.EventSystems.IBeginDragHandler>() != null)
                     {
-                        return true;
+                        return true; // Блокируем рисование, отдаем касание слоту
                     }
                 }
             }
@@ -248,17 +237,8 @@ namespace SpellSystem.UI
             recordedGesturePoints.Clear();
             visualPoints.Clear();
 
-            if (lineRenderer != null)
-            {
-                lineRenderer.positionCount = 0;
-            }
-
-            if (leadingDot != null)
-            {
-                leadingDot.gameObject.SetActive(false);
-            }
-
-            Debug.Log("[RuneDrawer] Отпустили палец за пределами зоны. Рисование отменено.");
+            if (lineRenderer != null) lineRenderer.positionCount = 0;
+            if (leadingDot != null) leadingDot.gameObject.SetActive(false);
         }
 
         private void StartDrawing(Vector2 screenPos)
@@ -268,6 +248,9 @@ namespace SpellSystem.UI
             isOutsideZone = false;
             recordedGesturePoints.Clear();
             visualPoints.Clear();
+
+            currentLineAlpha = 1f;
+            ApplyGradientAlpha(1f);
 
             lineRenderer.positionCount = 0;
             if (leadingDot != null) leadingDot.gameObject.SetActive(true);
@@ -286,38 +269,25 @@ namespace SpellSystem.UI
             {
                 AddPoint(screenPos);
             }
-
-            UpdateLeadingDotPosition(screenPos);
         }
 
         private void AddPoint(Vector2 screenPos)
         {
             recordedGesturePoints.Add(screenPos);
 
-            Vector3 worldPos = uiCamera.ScreenToWorldPoint(new Vector3(screenPos.x, screenPos.y, 10f));
+            float zDepth = uiCamera.nearClipPlane + 1f;
+            Vector3 worldPos = uiCamera.ScreenToWorldPoint(new Vector3(screenPos.x, screenPos.y, zDepth));
+
             visualPoints.Add(new PointData
             {
                 screenPos = screenPos,
                 worldPos = worldPos,
                 timeCreated = Time.time
             });
-
-            UpdateLeadingDotPosition(screenPos);
-        }
-
-        private void UpdateLeadingDotPosition(Vector2 screenPos)
-        {
-            if (leadingDot != null)
-            {
-                Vector3 worldPos = uiCamera.ScreenToWorldPoint(new Vector3(screenPos.x, screenPos.y, 10f));
-                leadingDot.position = worldPos;
-            }
         }
 
         private void UpdateVisualTrail()
         {
-            // Пока мы находимся вне зоны, шлейф плавно исчезает со временем,
-            // но точки записанного жестa (recordedGesturePoints) сохраняются!
             float currentTime = Time.time;
 
             while (visualPoints.Count > 0 && (currentTime - visualPoints[0].timeCreated) > trailLifetime)
@@ -326,9 +296,34 @@ namespace SpellSystem.UI
             }
 
             lineRenderer.positionCount = visualPoints.Count;
+            float zDepth = uiCamera.nearClipPlane + 1f;
+
             for (int i = 0; i < visualPoints.Count; i++)
             {
-                lineRenderer.SetPosition(i, visualPoints[i].worldPos);
+                // Постоянно пересчитываем позиции точек в мировом пространстве
+                // Так как это происходит в LateUpdate (после камеры), линия всегда будет приклеена к экрану
+                Vector3 currentWorldPos = uiCamera.ScreenToWorldPoint(new Vector3(visualPoints[i].screenPos.x, visualPoints[i].screenPos.y, zDepth));
+                lineRenderer.SetPosition(i, currentWorldPos);
+            }
+
+            if (isDrawing && leadingDot != null && visualPoints.Count > 0)
+            {
+                Vector2 lastScreenPos = visualPoints[visualPoints.Count - 1].screenPos;
+                leadingDot.position = uiCamera.ScreenToWorldPoint(new Vector3(lastScreenPos.x, lastScreenPos.y, zDepth));
+            }
+
+            if (!isDrawing && visualPoints.Count > 0)
+            {
+                currentLineAlpha -= Time.deltaTime * 3f;
+
+                if (currentLineAlpha <= 0f)
+                {
+                    currentLineAlpha = 0f;
+                    visualPoints.Clear();
+                    lineRenderer.positionCount = 0;
+                }
+
+                ApplyGradientAlpha(currentLineAlpha);
             }
 
             if (!isDrawing && visualPoints.Count == 0 && leadingDot != null)
@@ -340,8 +335,6 @@ namespace SpellSystem.UI
         private void UpdateZoneGlow()
         {
             if (zoneImage == null) return;
-
-            // Если вылезли за пределы зоны — гасим свечение, пока не вернемся
             Color targetColor = (isDrawing && !isOutsideZone) ? zoneActiveColor : zoneIdleColor;
             zoneImage.color = Color.Lerp(zoneImage.color, targetColor, Time.deltaTime * glowFadeSpeed);
         }
@@ -356,30 +349,31 @@ namespace SpellSystem.UI
             if (recordedGesturePoints.Count >= 5)
             {
                 ShapeType recognizedShape = GestureRecognizer.RecognizeShape(recordedGesturePoints, out float accuracy);
-                Debug.Log($"[RuneDrawer] Распознана форма: <color=yellow>{recognizedShape}</color> (Точность: {accuracy * 100:F1}%)");
                 OnShapeRecognized?.Invoke(recognizedShape, accuracy);
             }
+        }
+
+        private void ApplyGradientAlpha(float globalAlpha)
+        {
+            Gradient gradient = new Gradient();
+
+            GradientColorKey[] colorKeys = new GradientColorKey[2];
+            colorKeys[0] = new GradientColorKey(currentColor, 0.0f);
+            colorKeys[1] = new GradientColorKey(currentColor, 1.0f);
+
+            GradientAlphaKey[] alphaKeys = new GradientAlphaKey[2];
+            alphaKeys[0] = new GradientAlphaKey(0.0f, 0.0f);
+            alphaKeys[1] = new GradientAlphaKey(globalAlpha, 1.0f);
+
+            gradient.SetKeys(colorKeys, alphaKeys);
+            if (lineRenderer != null) lineRenderer.colorGradient = gradient;
         }
 
         public void SetLineColor(Color color)
         {
             currentColor = color;
-
             zoneActiveColor = new Color(color.r, color.g, color.b, 0.35f);
-
-            Gradient gradient = new Gradient();
-
-            GradientColorKey[] colorKeys = new GradientColorKey[2];
-            colorKeys[0] = new GradientColorKey(color, 0.0f);
-            colorKeys[1] = new GradientColorKey(color, 1.0f);
-
-            GradientAlphaKey[] alphaKeys = new GradientAlphaKey[3];
-            alphaKeys[0] = new GradientAlphaKey(0.0f, 0.0f);
-            alphaKeys[1] = new GradientAlphaKey(0.7f, 0.6f);
-            alphaKeys[2] = new GradientAlphaKey(1.0f, 1.0f);
-
-            gradient.SetKeys(colorKeys, alphaKeys);
-            lineRenderer.colorGradient = gradient;
+            ApplyGradientAlpha(currentLineAlpha);
 
             if (leadingDotRenderer != null)
             {

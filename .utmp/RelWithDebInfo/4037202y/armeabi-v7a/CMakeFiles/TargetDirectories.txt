@@ -1,0 +1,5 @@
+C:/Users/EWALD/Mobile_Grindr/.utmp/RelWithDebInfo/4037202y/armeabi-v7a/CMakeFiles/edit_cache.dir
+C:/Users/EWALD/Mobile_Grindr/.utmp/RelWithDebInfo/4037202y/armeabi-v7a/CMakeFiles/rebuild_cache.dir
+C:/Users/EWALD/Mobile_Grindr/.utmp/RelWithDebInfo/4037202y/armeabi-v7a/GameActivity/CMakeFiles/game.dir
+C:/Users/EWALD/Mobile_Grindr/.utmp/RelWithDebInfo/4037202y/armeabi-v7a/GameActivity/CMakeFiles/edit_cache.dir
+C:/Users/EWALD/Mobile_Grindr/.utmp/RelWithDebInfo/4037202y/armeabi-v7a/GameActivity/CMakeFiles/rebuild_cache.dir

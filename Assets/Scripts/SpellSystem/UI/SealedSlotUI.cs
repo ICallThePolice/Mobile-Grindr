@@ -7,13 +7,13 @@ using SpellSystem.Data;
 
 namespace SpellSystem.UI
 {
-    public class SealedSlotUI : MonoBehaviour, IDropHandler, IPointerClickHandler
+    public class SealedSlotUI : MonoBehaviour, IDropHandler, IPointerDownHandler, IPointerUpHandler, IPointerEnterHandler
     {
         [Header("Slot Settings")]
         [SerializeField] private int slotIndex = 0;
 
-        [Header("Visual Elements (Перетащите сюда 3 шага этого слота)")]
-        [SerializeField] private Image[] stepIcons; // Сюда массив из 3 картинок (например, S1_Step_1, S1_Step_2, S1_Step_3)
+        [Header("Visual Elements")]
+        [SerializeField] private Image[] stepIcons;
 
         [Header("Shape Icons Sprites")]
         [SerializeField] private Sprite triangleSprite;
@@ -21,6 +21,7 @@ namespace SpellSystem.UI
         [SerializeField] private Sprite squareSprite;
 
         private List<SpellCaster.ComboStep> savedCombo = new List<SpellCaster.ComboStep>();
+        private bool savedIsInnate = false;
         private SpellCaster cachedCaster;
 
         private void Awake()
@@ -29,44 +30,66 @@ namespace SpellSystem.UI
             cachedCaster = FindAnyObjectByType<SpellCaster>();
         }
 
-        // Срабатывает, когда на этот слот перетаскивают кнопку атаки
+        public void OnPointerEnter(PointerEventData eventData)
+        {
+            if (DraggableAttackButton.IsDraggingForSeal)
+            {
+                TrySealCombo();
+            }
+        }
+
         public void OnDrop(PointerEventData eventData)
         {
-            var draggable = eventData.pointerDrag?.GetComponent<DraggableAttackButton>();
-            if (draggable == null) return;
+            if (DraggableAttackButton.IsDraggingForSeal)
+            {
+                TrySealCombo();
+            }
+        }
 
+        private void TrySealCombo()
+        {
             if (cachedCaster == null) cachedCaster = FindAnyObjectByType<SpellCaster>();
             if (cachedCaster == null) return;
 
             var combo = cachedCaster.GetCurrentComboCopy();
-            if (combo != null && combo.Count > 0)
+
+            if (combo.Count == 0)
             {
-                savedCombo = combo;
-                UpdateSlotVisuals(savedCombo);
-                cachedCaster.ResetCombo(); // Очищаем поле рисования после успешного запечатывания
-                Debug.Log($"[SealedSlotUI] Навык успешно запечатан в слот #{slotIndex}!");
+                Debug.Log($"[SealedSlotUI] Слот #{slotIndex}: Пустое заклинание, отмена!");
+                return;
             }
-            else
-            {
-                Debug.LogWarning("[SealedSlotUI] Нечего запечатывать — текущее комбо пустое.");
-            }
+
+            cachedCaster.CancelCharge();
+
+            savedCombo = combo;
+            savedIsInnate = false;
+
+            UpdateSlotVisuals(savedCombo);
+
+            // Жестко отрываем кнопку от пальца
+            DraggableAttackButton.CurrentDraggedButton?.MarkAsSealedAndStop();
         }
 
-        // Срабатывает при клике по запечатанному слоту — для быстрого каста
-        public void OnPointerClick(PointerEventData eventData)
+        public void OnPointerDown(PointerEventData eventData)
         {
             if (savedCombo != null && savedCombo.Count > 0)
             {
                 if (cachedCaster == null) cachedCaster = FindAnyObjectByType<SpellCaster>();
                 if (cachedCaster != null)
                 {
-                    cachedCaster.CastSealedCombo(savedCombo);
-                    Debug.Log($"[SealedSlotUI] Каст сохраненного навыка из слота #{slotIndex}!");
+                    cachedCaster.BeginCharge(savedCombo, savedIsInnate);
                 }
             }
-            else
+        }
+
+        public void OnPointerUp(PointerEventData eventData)
+        {
+            if (savedCombo != null && savedCombo.Count > 0)
             {
-                Debug.Log("[SealedSlotUI] Слот пуст. Перетащите сюда заклинание с кнопки атаки.");
+                if (cachedCaster != null)
+                {
+                    cachedCaster.ReleaseCast();
+                }
             }
         }
 
@@ -83,7 +106,6 @@ namespace SpellSystem.UI
                     stepIcons[i].gameObject.SetActive(true);
                     var step = combo[i];
 
-                    // Устанавливаем спрайт формы
                     stepIcons[i].sprite = step.shape switch
                     {
                         ShapeType.Triangle => triangleSprite,
@@ -92,11 +114,10 @@ namespace SpellSystem.UI
                         _ => null
                     };
 
-                    // Устанавливаем цвет энергии
                     if (step.energy != null)
                     {
                         Color col = step.energy.primaryColor;
-                        col.a = 1f; // Гарантируем полную видимость
+                        col.a = 1f;
                         stepIcons[i].color = col;
                     }
                     else

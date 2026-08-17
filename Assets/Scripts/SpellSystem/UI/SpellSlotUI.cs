@@ -7,7 +7,7 @@ using UnityEngine.UI;
 
 namespace SpellSystem.UI
 {
-    public class SpellSlotUI : MonoBehaviour, IPointerClickHandler, IDropHandler
+    public class SpellSlotUI : MonoBehaviour, IDropHandler, IPointerClickHandler, IPointerEnterHandler
     {
         [Header("References")]
         [SerializeField] private SpellCaster spellCaster;
@@ -22,64 +22,71 @@ namespace SpellSystem.UI
 
         private List<SpellCaster.ComboStep> savedCombo = new List<SpellCaster.ComboStep>();
 
+        private bool savedIsInnate = false;
+        private int savedChargeLevel = 0;
+        private float savedMultiplier = 1f;
+
         private void Awake()
         {
             if (spellCaster == null) spellCaster = FindAnyObjectByType<SpellCaster>();
             ClearVisuals();
         }
 
-        // --- Перетаскивание (Drop): Запечатывание навыка в слот ---
+        public void OnPointerEnter(PointerEventData eventData)
+        {
+            if (DraggableAttackButton.IsDraggingForSeal)
+            {
+                TrySealCombo();
+            }
+        }
+
         public void OnDrop(PointerEventData eventData)
         {
-            // Проверяем, что перетаскивают именно элемент с компонентом DraggableAttackButton
-            var draggable = eventData.pointerDrag?.GetComponent<DraggableAttackButton>();
-            if (draggable == null) return;
-
-            if (spellCaster == null) spellCaster = FindAnyObjectByType<SpellCaster>();
-
-            if (spellCaster != null && spellCaster.HasActiveCombo())
+            if (DraggableAttackButton.IsDraggingForSeal)
             {
-                savedCombo = spellCaster.GetCurrentComboCopy();
-                UpdateVisuals();
-
-                spellCaster.ResetCombo();
-                Debug.Log("[SpellSlotUI] Заклинание успешно запечатано в слот перетаскиванием!");
-            }
-            else
-            {
-                Debug.LogWarning("[SpellSlotUI] Нечего запечатывать — поле рисования пустое.");
+                TrySealCombo();
             }
         }
 
-        // --- Клик: Быстрый каст сохраненного навыка ---
+        private void TrySealCombo()
+        {
+            if (spellCaster == null) spellCaster = FindAnyObjectByType<SpellCaster>();
+            if (spellCaster == null) return;
+
+            var combo = spellCaster.GetCurrentComboCopy();
+
+            if (combo.Count == 0)
+            {
+                Debug.Log("[SpellSlotUI] Пустое заклинание! Отмена запечатывания.");
+                return;
+            }
+
+            savedChargeLevel = spellCaster.GetCurrentChargeLevel();
+            savedCombo = combo;
+            savedIsInnate = false;
+
+            savedChargeLevel = Mathf.Min(savedChargeLevel, savedCombo.Count);
+            savedMultiplier = spellCaster.GetChargeMultiplier(savedChargeLevel);
+
+            UpdateVisuals();
+
+            spellCaster.CancelCharge();
+            spellCaster.ResetCombo();
+
+            // Жестко отрываем кнопку от пальца
+            DraggableAttackButton.CurrentDraggedButton?.MarkAsSealedAndStop();
+        }
+
         public void OnPointerClick(PointerEventData eventData)
         {
-            if (savedCombo != null && savedCombo.Count > 0)
+            if (savedCombo != null && savedCombo.Count > 0 && spellCaster != null)
             {
-                CastSavedCombo();
-            }
-            else
-            {
-                Debug.Log("[SpellSlotUI] Слот пуст. Перетащите сюда заклинание с кнопки атаки.");
+                spellCaster.CastSealedCombo(savedCombo, savedChargeLevel, savedMultiplier, savedIsInnate);
             }
         }
-
-        // --- Функционал ---
-
-        private void CastSavedCombo()
-        {
-            if (spellCaster != null && savedCombo != null && savedCombo.Count > 0)
-            {
-                spellCaster.CastSealedCombo(savedCombo);
-                Debug.Log("[SpellSlotUI] Каст из слота!");
-            }
-        }
-
-        // --- Визуализация ---
 
         private void UpdateVisuals()
         {
-            // Сначала очищаем старые иконки
             ClearVisuals();
 
             for (int i = 0; i < stepIcons.Length; i++)
@@ -100,7 +107,7 @@ namespace SpellSystem.UI
                     if (step.energy != null)
                     {
                         Color col = step.energy.primaryColor;
-                        col.a = 1f; // Защита от нулевой прозрачности
+                        col.a = 1f;
                         stepIcons[i].color = col;
                     }
                     else

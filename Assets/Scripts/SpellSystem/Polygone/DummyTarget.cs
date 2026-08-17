@@ -1,4 +1,5 @@
 using UnityEngine;
+using SpellSystem.UI; // Обязательно подключаем UI для работы с DamageNumberManager
 
 namespace SpellSystem.Testing
 {
@@ -19,11 +20,22 @@ namespace SpellSystem.Testing
             }
         }
 
-        // Метод получения урона
-        public void TakeDamage(float amount, string energyName)
+        // ИСПРАВЛЕНИЕ: Добавили Color damageColor, чтобы снаряды могли передавать цвет своей энергии.
+        public void TakeDamage(float amount, string energyName, Color damageColor = default)
         {
             currentHealth -= amount;
             Debug.Log($"[Манекен {gameObject.name}] Получил <color=red>{amount}</color> урона от энергии <color=cyan>{energyName}</color>. ХП: {currentHealth}");
+
+            // --- СПАВН ЦИФР УРОНА ---
+            // Если цвет не передан (равен default), делаем его красным по умолчанию
+            if (damageColor == default) damageColor = Color.red;
+
+            if (DamageNumberManager.Instance != null)
+            {
+                // Вызываем вылет цифры!
+                DamageNumberManager.Instance.SpawnDamage(transform.position, amount, damageColor);
+            }
+            // ------------------------
 
             // Визуальный отклик (мигание белым при попадании)
             if (meshRenderer != null)
@@ -46,7 +58,7 @@ namespace SpellSystem.Testing
         private void Die()
         {
             Debug.Log($"[Манекен {gameObject.name}] Уничтожен!");
-            // Для тестов можно просто восстанавливать ХП вместо удаления объекта
+            // Для тестов просто восстанавливаем ХП
             currentHealth = maxHealth;
         }
     }

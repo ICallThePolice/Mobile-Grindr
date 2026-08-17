@@ -20,9 +20,9 @@ namespace SpellSystem.Core
         [SerializeField] private int maxUnlockedRank = 1;
 
         [Header("Energies (Keys 1, 2, 3)")]
-        [SerializeField] private EnergyDataSO energy1; // Витал (Клавиша 1)
-        [SerializeField] private EnergyDataSO energy2; // Psy (Клавиша 2)
-        [SerializeField] private EnergyDataSO energy3; // Эреб (Клавиша 3)
+        [SerializeField] private EnergyDataSO energy1;
+        [SerializeField] private EnergyDataSO energy2;
+        [SerializeField] private EnergyDataSO energy3;
 
         [Header("References")]
         [SerializeField] private RuneDrawer runeDrawer;
@@ -33,11 +33,25 @@ namespace SpellSystem.Core
         [Header("Prefabs")]
         [SerializeField] private SpellProjectile projectilePrefab;
         [SerializeField] private SpellAoE aoePrefab;
-        [SerializeField] private SpellShield shieldPrefab;
+        [SerializeField] private SpellDebuff debuffPrefab;
         [SerializeField] private SpellTotem totemPrefab;
+
+        [Header("Charge Settings")]
+        [SerializeField] private float baseAttackChargeTime = 1f;
+        [SerializeField] private float timePerChargeLevel = 2f;
+        [SerializeField] private int maxChargeLevels = 3;
+
+        private bool isCharging = false;
+        private float currentChargeTime = 0f;
+        private bool isHardLocked = false;
 
         private EnergyDataSO currentEnergy;
         private List<ComboStep> currentCombo = new List<ComboStep>();
+
+        private List<ComboStep> comboBeingCharged = null;
+        private bool isChargingInnate = false;
+
+        public EnergyDataSO CurrentEnergy => currentEnergy;
 
         private void OnEnable()
         {
@@ -51,16 +65,109 @@ namespace SpellSystem.Core
 
         private void Start()
         {
-            // По умолчанию ставим энергию №1
             if (energy1 != null) SetEnergy(energy1);
         }
 
         private void Update()
         {
             HandleEnergyHotkeys();
+
+            if (isCharging)
+            {
+                currentChargeTime += Time.deltaTime;
+                float absoluteMaxTime = baseAttackChargeTime + (maxChargeLevels * timePerChargeLevel);
+                currentChargeTime = Mathf.Clamp(currentChargeTime, 0f, absoluteMaxTime);
+            }
         }
 
-        // Переключение стихий на 1, 2, 3
+        public void BeginCharge()
+        {
+            isCharging = true;
+            currentChargeTime = 0f;
+            comboBeingCharged = null;
+            isChargingInnate = false;
+        }
+
+        public void BeginCharge(List<ComboStep> comboToCharge, bool isInnate)
+        {
+            isCharging = true;
+            currentChargeTime = 0f;
+            comboBeingCharged = comboToCharge;
+            isChargingInnate = isInnate;
+        }
+
+        public void CancelCharge()
+        {
+            isCharging = false;
+            currentChargeTime = 0f;
+            comboBeingCharged = null;
+            isChargingInnate = false;
+        }
+
+        public void ReleaseCast()
+        {
+            // ЖЕЛЕЗОБЕТОННАЯ ПРОВЕРКА: Читаем статическое поле напрямую.
+            // Если кнопку утащили за пределы джойстика - отменяем выстрел!
+            if (DraggableAttackButton.IsDraggingForSeal)
+            {
+                Debug.Log("<color=yellow>[SpellCaster]</color> Кнопка утянута в слот! Выстрел отменен.");
+                return;
+            }
+
+            if (!isCharging) return;
+            isCharging = false;
+
+            int chargeLevel = GetCurrentChargeLevel();
+
+            List<ComboStep> actualCombo;
+            bool isInnate = false;
+
+            if (comboBeingCharged != null)
+            {
+                actualCombo = comboBeingCharged;
+                isInnate = isChargingInnate;
+            }
+            else
+            {
+                if (currentCombo.Count == 0)
+                {
+                    actualCombo = new List<ComboStep> { new ComboStep { shape = ShapeType.Triangle, energy = currentEnergy } };
+                    isInnate = true;
+                }
+                else
+                {
+                    actualCombo = currentCombo;
+                    isInnate = false;
+                }
+            }
+
+            int maxAllowedByRunes = isInnate ? 1 : actualCombo.Count;
+            chargeLevel = Mathf.Min(chargeLevel, maxAllowedByRunes);
+            float multiplier = GetChargeMultiplier(chargeLevel);
+
+            Debug.Log($"<color=orange>[SpellCaster]</color> Выстрел! Удержание: {currentChargeTime:F1}с. Заряд: {chargeLevel}, Множитель: {multiplier}x");
+
+            ExecuteComboChain(actualCombo, chargeLevel, multiplier, isInnate);
+
+            comboBeingCharged = null;
+            isChargingInnate = false;
+        }
+
+        public int GetCurrentChargeLevel()
+        {
+            if (currentChargeTime <= baseAttackChargeTime) return 0;
+            float extraTime = currentChargeTime - baseAttackChargeTime;
+            int level = 1 + Mathf.FloorToInt(extraTime / timePerChargeLevel);
+            return Mathf.Min(level, maxChargeLevels);
+        }
+
+        public float GetChargeMultiplier(int level)
+        {
+            return 1f + (level * 0.5f);
+        }
+
+        // ====================== СМЕНА ЭНЕРГИИ ======================
+
         private void HandleEnergyHotkeys()
         {
             var keyboard = Keyboard.current;
@@ -71,146 +178,111 @@ namespace SpellSystem.Core
             if (keyboard.digit3Key.wasPressedThisFrame && energy3 != null) SetEnergy(energy3);
         }
 
+        // НОВЫЕ МЕТОДЫ ДЛЯ КНОПОК UI
+        public void SelectEnergy1() { if (energy1 != null) SetEnergy(energy1); }
+        public void SelectEnergy2() { if (energy2 != null) SetEnergy(energy2); }
+        public void SelectEnergy3() { if (energy3 != null) SetEnergy(energy3); }
+
         public void SetEnergy(EnergyDataSO newEnergy)
         {
             currentEnergy = newEnergy;
             if (runeDrawer != null && currentEnergy != null)
-            {
                 runeDrawer.SetLineColor(currentEnergy.primaryColor);
-            }
-            Debug.Log($"[SpellCaster] Выбрана энергия: <color=cyan>{currentEnergy?.energyName}</color>");
         }
+
+        // ====================== ЛОГИКА ЦЕПОЧЕК ======================
 
         private void HandleShapeRecognized(ShapeType shapeType, float accuracy)
         {
-            if (currentCombo.Count >= maxUnlockedRank)
-            {
-                Debug.LogWarning($"[SpellCaster] Достигнут лимит ({maxUnlockedRank})! Нажмите Атаку или Сброс.");
-                return;
-            }
+            if (currentCombo.Count >= maxUnlockedRank) return;
 
-            // Запоминаем фигуру ВМЕСТЕ с энергией, которая была выбрана в момент рисования!
             ComboStep newStep = new ComboStep { shape = shapeType, energy = currentEnergy };
             currentCombo.Add(newStep);
 
-            // Отображаем на UI именно в цвете выбранной для этой руны стихии
             if (sealUI != null && currentEnergy != null)
-            {
                 sealUI.DisplayRune(currentCombo.Count - 1, shapeType, currentEnergy.primaryColor);
-            }
         }
 
-        // Устанавливает цель из системы прицеливания
-        private bool isHardLocked = false;
-
-        // Обновленный метод установки цели с флагом жесткого лока
         public void SetTarget(Transform target, bool hardLocked)
         {
             lockOnTarget = target;
             isHardLocked = hardLocked;
         }
 
-        // Перегрузка для совместимости
         public void SetTarget(Transform target)
         {
             lockOnTarget = target;
             isHardLocked = false;
         }
 
-        // Вызывается по кнопке "Атака"
-        public void CastCurrentCombo()
+        private void ExecuteComboChain(List<ComboStep> combo, int chargeLvl, float multiplier, bool isInnate)
         {
-            if (currentCombo.Count == 0)
-            {
-                Debug.Log("[SpellCaster] Печать пуста! Нарисуйте хотя бы одну руну.");
-                return;
-            }
-
-            ExecuteComboChain(currentCombo);
-        }
-
-        // Запускает каст конкретного сохраненного в слоте комбо
-        public void CastSealedCombo(List<SpellCaster.ComboStep> comboToCast)
-        {
-            if (comboToCast == null || comboToCast.Count == 0) return;
-
-            ExecuteComboChain(comboToCast);
-        }
-
-        // ГЛАВНЫЙ МЕТОД: ЗАПУСК ЦЕПОЧКИ
-        private void ExecuteComboChain(List<ComboStep> combo)
-        {
-            // 1. Собираем цепочку и получаем первый (корневой) узел
             SpellNode rootNode = BuildSpellChain(combo);
             if (rootNode == null) return;
 
-            // 2. Создаем стартовый контекст
             Vector3 startPos = castPoint != null ? castPoint.position : (transform.position + transform.forward);
             SpellContext initialContext = new SpellContext
             {
                 Caster = this.transform,
                 HitPosition = startPos,
-                Direction = transform.forward,
+                // ИСПРАВЛЕНИЕ: Берем направление строго от Cast Point (куда вы его повернули), а не от тела!
+                Direction = castPoint != null ? castPoint.forward : transform.forward,
                 Target = lockOnTarget,
-                IsHardLocked = isHardLocked
+                IsHardLocked = isHardLocked,
+                ChargeLevel = chargeLvl,
+                ChargeMultiplier = multiplier,
+                IsChainCast = false,
+                IsInnate = isInnate
             };
 
-            // 3. Запускаем магию!
             rootNode.Execute(initialContext);
         }
 
-        // ФАБРИКА УЗЛОВ (Собирает цепочку с конца в начало)
+        public void CastSealedCombo(List<SpellCaster.ComboStep> comboToCast, int savedChargeLvl, float savedMultiplier, bool isInnate)
+        {
+            if (comboToCast == null || comboToCast.Count == 0) return;
+            ExecuteComboChain(comboToCast, savedChargeLvl, savedMultiplier, isInnate);
+        }
+
         private SpellNode BuildSpellChain(List<ComboStep> combo)
         {
             SpellNode nextNode = null;
-
-            // Идем с конца списка к началу
             for (int i = combo.Count - 1; i >= 0; i--)
             {
                 ComboStep step = combo[i];
                 SpellNode currentNode = CreateNodeForShape(step.shape, step.energy);
-
                 if (currentNode != null)
                 {
-                    // Указываем текущему узлу, кто идет после него
                     currentNode.NextNode = nextNode;
-
-                    // Теперь текущий узел становится "следующим" для предыдущего шага цикла
                     nextNode = currentNode;
                 }
             }
-
-            // Возвращаем самый первый узел (он стал nextNode на последней итерации цикла)
             return nextNode;
         }
 
-        // Метод, который решает, какой именно класс узла создать
         private SpellNode CreateNodeForShape(ShapeType shape, EnergyDataSO energy)
         {
             return shape switch
             {
                 ShapeType.Triangle => new TriangleNode(projectilePrefab, energy),
                 ShapeType.Circle => new CircleNode(aoePrefab, energy),
-                ShapeType.Square => new SquareNode(shieldPrefab, totemPrefab, energy), // <--- Передаем totemPrefab
+                ShapeType.Square => new SquareNode(debuffPrefab, totemPrefab, projectilePrefab, energy),
                 _ => null
             };
         }
 
-        // Вызывается по кнопке "Сброс" (Reset)
         public void ResetCombo()
         {
             currentCombo.Clear();
+            CancelCharge();
             if (sealUI != null) sealUI.ClearAllSlots();
-            Debug.Log("[SpellCaster] Печать и комбинация сброшены!");
         }
 
-        // Проверяет, есть ли активное комбо для перетаскивания
         public bool HasActiveCombo()
         {
-            return currentCombo != null && currentCombo.Count > 0;
+            return currentCombo != null;
         }
 
-        // Возвращает копию текущего комбо для сохранения в слот
         public List<SpellCaster.ComboStep> GetCurrentComboCopy()
         {
             return new List<SpellCaster.ComboStep>(currentCombo);

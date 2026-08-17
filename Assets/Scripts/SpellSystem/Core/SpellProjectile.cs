@@ -11,15 +11,20 @@ namespace SpellSystem.Core
         public event Action<Vector3, Transform> OnImpact;
 
         [Header("Settings")]
-        [SerializeField] private float speed = 20f;
+        [SerializeField] private float baseSpeed = 20f;
         [SerializeField] private float lifetime = 5f;
-        [Tooltip("Скорость доводки на цель. 0 - летит прямо, 50 - резкий поворот")]
         [SerializeField] private float homingSensitivity = 10f;
 
+        [Header("Fail-Safe Settings")]
+        [SerializeField] private float autoHitDistance = 1.5f;
+
+        private float speed;
         private float damage;
         private EnergyDataSO energyData;
         private Rigidbody rb;
-        private Transform homingTarget; // Сохраненная цель
+        private Transform homingTarget;
+        private Transform sourceTarget;
+        private bool hasHit = false;
 
         private void Awake()
         {
@@ -32,12 +37,15 @@ namespace SpellSystem.Core
             Destroy(gameObject, lifetime);
         }
 
-        // Добавили параметр sourceTarget
-        public void Initialize(float damage, EnergyDataSO energy, Transform target = null, Transform sourceTarget = null)
+        public void Initialize(float damage, EnergyDataSO energy, Transform target = null, Transform sourceTarget = null, float chargeMultiplier = 1f)
         {
-            this.damage = damage;
+            this.damage = damage * chargeMultiplier;
             this.energyData = energy;
             this.homingTarget = target;
+            this.sourceTarget = sourceTarget;
+
+            transform.localScale *= chargeMultiplier;
+            this.speed = baseSpeed / chargeMultiplier;
 
             if (energy != null)
             {
@@ -45,7 +53,6 @@ namespace SpellSystem.Core
                 if (rend != null) rend.material.color = energy.primaryColor;
             }
 
-            // ИГНОРИРУЕМ КОЛЛИЗИЮ с источником (работает для любых размеров мешей и коллайдеров)
             if (sourceTarget != null)
             {
                 Collider projCollider = GetComponent<Collider>();
@@ -63,18 +70,20 @@ namespace SpellSystem.Core
             rb.linearVelocity = transform.forward * speed;
         }
 
-        // Используем FixedUpdate для плавной физической доводки
         private void FixedUpdate()
         {
-            if (homingTarget != null && rb != null)
+            if (homingTarget != null && rb != null && !hasHit)
             {
-                // Находим направление к цели
-                Vector3 directionToTarget = (homingTarget.position - transform.position).normalized;
+                float distance = Vector3.Distance(transform.position, homingTarget.position);
+                if (distance <= autoHitDistance)
+                {
+                    ForceHit(homingTarget);
+                    return;
+                }
 
-                // Плавно смешиваем текущий вектор полета с вектором на цель
+                Vector3 directionToTarget = (homingTarget.position - transform.position).normalized;
                 Vector3 newDirection = Vector3.Slerp(rb.linearVelocity.normalized, directionToTarget, homingSensitivity * Time.fixedDeltaTime);
 
-                // Применяем новую скорость и поворачиваем нос снаряда по курсу
                 rb.linearVelocity = newDirection * speed;
                 transform.rotation = Quaternion.LookRotation(rb.linearVelocity);
             }
@@ -82,16 +91,41 @@ namespace SpellSystem.Core
 
         private void OnTriggerEnter(Collider other)
         {
-            if (other.CompareTag("Player")) return;
+            if (hasHit) return;
 
-            DummyTarget target = other.GetComponent<DummyTarget>();
-            if (target == null) return;
+            // ИСПРАВЛЕНИЕ: Надежный игнор игрока! Теперь мы ищем твои скрипты управления.
+            if (other.CompareTag("Player") ||
+                other.GetComponentInParent<MobilePlayerController>() != null ||
+                other.GetComponentInParent<PlayerMovement>() != null)
+            {
+                return;
+            }
 
-            string energyName = energyData != null ? energyData.energyName : "Без энергии";
-            target.TakeDamage(damage, energyName);
+            if (sourceTarget != null && (other.transform == sourceTarget || other.transform.IsChildOf(sourceTarget)))
+            {
+                return;
+            }
 
-            OnImpact?.Invoke(transform.position, other.transform);
+            ForceHit(other.transform);
+        }
 
+        private void ForceHit(Transform hitTransform)
+        {
+            if (hasHit) return;
+            hasHit = true;
+
+            // ИСПРАВЛЕНИЕ: Ищем компонент манекена глубоко, даже если попали в его руку/дочерний коллайдер
+            DummyTarget target = hitTransform.GetComponentInParent<DummyTarget>();
+
+            if (target != null)
+            {
+                string energyName = energyData != null ? energyData.energyName : "Без энергии";
+                Color energyColor = energyData != null ? energyData.primaryColor : Color.white;
+
+                target.TakeDamage(damage, energyName, energyColor);
+            }
+
+            OnImpact?.Invoke(transform.position, hitTransform);
             Destroy(gameObject);
         }
     }

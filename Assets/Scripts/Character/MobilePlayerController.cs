@@ -1,5 +1,7 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.UI;
 
 namespace SpellSystem.Core
 {
@@ -10,6 +12,15 @@ namespace SpellSystem.Core
         [SerializeField] private float moveSpeed = 5f;
         [SerializeField] private float turnSpeed = 15f;
 
+        [Header("Dash Settings")]
+        [SerializeField] private float dashSpeed = 20f;
+        [SerializeField] private float dashDuration = 0.25f;
+        [SerializeField] private float dashCooldown = 1.5f;
+
+        [Header("UI Dash References")]
+        [SerializeField] private Button dashButton;
+        [SerializeField] private Image cooldownImage;
+
         [Header("References")]
         [SerializeField] private SimpleThirdPersonCamera cameraScript;
         [SerializeField] private Animator animator;
@@ -17,6 +28,8 @@ namespace SpellSystem.Core
         [SerializeField] private Camera mainCamera;
 
         private CharacterController controller;
+        private bool isDashing = false;
+        private bool isDashCooldown = false;
 
         private void Awake()
         {
@@ -25,6 +38,9 @@ namespace SpellSystem.Core
             if (animator == null) animator = GetComponentInChildren<Animator>();
             if (characterModel == null && animator != null) characterModel = animator.transform;
             if (mainCamera == null) mainCamera = Camera.main;
+
+            if (cooldownImage != null) cooldownImage.fillAmount = 0f;
+            if (dashButton != null) dashButton.onClick.AddListener(PerformDash);
         }
 
         private void Update()
@@ -32,12 +48,72 @@ namespace SpellSystem.Core
             Vector2 moveInput = GetUniversalMoveInput();
             Vector2 lookInput = GetUniversalLookInput();
 
-            Move(moveInput);
+            if (!isDashing)
+            {
+                Move(moveInput);
+            }
 
             if (cameraScript != null)
             {
                 cameraScript.SetLookInput(lookInput);
             }
+        }
+
+        public void PerformDash()
+        {
+            if (isDashing || isDashCooldown) return;
+            StartCoroutine(DashRoutine());
+        }
+
+        private IEnumerator DashRoutine()
+        {
+            isDashing = true;
+            isDashCooldown = true;
+
+            if (dashButton != null) dashButton.interactable = false;
+            if (cooldownImage != null) cooldownImage.fillAmount = 1f;
+
+            Vector3 dashDir = characterModel.forward;
+            Vector2 input = GetUniversalMoveInput();
+
+            if (input.sqrMagnitude > 0.05f && mainCamera != null)
+            {
+                Vector3 camForward = mainCamera.transform.forward;
+                Vector3 camRight = mainCamera.transform.right;
+                camForward.y = 0; camRight.y = 0;
+
+                dashDir = (camRight * input.x + camForward * input.y).normalized;
+
+                if (characterModel != null)
+                    characterModel.rotation = Quaternion.LookRotation(dashDir);
+            }
+
+            // Запускаем кинематографичный эффект камеры (только если не Hard Lock)
+            if (cameraScript != null)
+            {
+                cameraScript.TriggerDashCam(dashDir, dashDuration);
+            }
+
+            float startTime = Time.time;
+
+            while (Time.time < startTime + dashDuration)
+            {
+                controller.Move(dashDir * dashSpeed * Time.deltaTime);
+                yield return null;
+            }
+
+            isDashing = false;
+
+            float cooldownTimer = dashCooldown;
+            while (cooldownTimer > 0)
+            {
+                cooldownTimer -= Time.deltaTime;
+                if (cooldownImage != null) cooldownImage.fillAmount = cooldownTimer / dashCooldown;
+                yield return null;
+            }
+
+            isDashCooldown = false;
+            if (dashButton != null) dashButton.interactable = true;
         }
 
         private Vector2 GetUniversalMoveInput()
@@ -63,9 +139,8 @@ namespace SpellSystem.Core
         {
             Vector2 input = Vector2.zero;
             if (Mouse.current != null && Mouse.current.rightButton.isPressed)
-            {
                 input = Mouse.current.delta.ReadValue() * 0.05f;
-            }
+
             if (Gamepad.current != null)
             {
                 Vector2 joystickInput = Gamepad.current.rightStick.ReadValue();
@@ -78,7 +153,6 @@ namespace SpellSystem.Core
         {
             if (mainCamera == null) return;
 
-            // 1. Векторы движения от камеры
             Vector3 camForward = mainCamera.transform.forward;
             Vector3 camRight = mainCamera.transform.right;
             camForward.y = 0;
@@ -86,7 +160,6 @@ namespace SpellSystem.Core
             camForward.Normalize();
             camRight.Normalize();
 
-            // 2. Двигаем капсулу
             Vector3 moveDir = camRight * input.x + camForward * input.y;
             controller.Move(moveDir * moveSpeed * Time.deltaTime);
 
@@ -95,24 +168,8 @@ namespace SpellSystem.Core
                 animator.SetFloat("Speed", input.magnitude);
             }
 
-            // 3. БОЕВАЯ СТОЙКА И РАЗВОРОТ МЕША
-            Transform activeTarget = cameraScript != null ? cameraScript.CurrentTarget : null;
-
-            if (activeTarget != null && characterModel != null)
+            if (moveDir.sqrMagnitude > 0.01f && characterModel != null)
             {
-                // В БОЮ: Персонаж всегда смотрит лицом на врага (стрейфится), независимо от того, куда бежит
-                Vector3 dirToEnemy = activeTarget.position - transform.position;
-                dirToEnemy.y = 0;
-
-                if (dirToEnemy != Vector3.zero)
-                {
-                    Quaternion targetRotation = Quaternion.LookRotation(dirToEnemy);
-                    characterModel.rotation = Quaternion.Slerp(characterModel.rotation, targetRotation, turnSpeed * Time.deltaTime);
-                }
-            }
-            else if (moveDir.sqrMagnitude > 0.01f && characterModel != null)
-            {
-                // ВНЕ БОЯ: Обычный бег лицом вперед
                 Quaternion targetRotation = Quaternion.LookRotation(moveDir);
                 characterModel.rotation = Quaternion.Slerp(characterModel.rotation, targetRotation, turnSpeed * Time.deltaTime);
             }
