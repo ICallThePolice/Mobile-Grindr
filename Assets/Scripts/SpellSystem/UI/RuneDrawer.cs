@@ -52,6 +52,9 @@ namespace SpellSystem.UI
         private Canvas parentCanvas;
         private float currentLineAlpha = 1f;
 
+        // НОВОЕ: Запоминаем ID пальца, которым начали рисовать
+        private int trackedFingerId = -1;
+
         private void Awake()
         {
             lineRenderer = GetComponent<LineRenderer>();
@@ -70,7 +73,6 @@ namespace SpellSystem.UI
         private void SetupLineRenderer()
         {
             lineRenderer.positionCount = 0;
-            // ВОЗВРАЩАЕМ В 3D ПРОСТРАНСТВО
             lineRenderer.useWorldSpace = true;
             lineRenderer.numCapVertices = 5;
             lineRenderer.numCornerVertices = 5;
@@ -123,8 +125,6 @@ namespace SpellSystem.UI
             return tex;
         }
 
-        // ИСПРАВЛЕНИЕ: Используем LateUpdate вместо Update.
-        // Теперь рисование происходит строго ПОСЛЕ того, как камера переместилась за персонажем.
         private void LateUpdate()
         {
             HandleInput();
@@ -132,44 +132,92 @@ namespace SpellSystem.UI
             UpdateZoneGlow();
         }
 
+        // --- ИСПРАВЛЕНИЕ: ПОДДЕРЖКА МУЛЬТИТАЧА ---
         private void HandleInput()
         {
-            var pointer = UnityEngine.InputSystem.Pointer.current;
-            if (pointer == null) return;
-
-            Vector2 pointerPos = pointer.position.ReadValue();
-
-            if (pointer.press.wasPressedThisFrame)
+            // 1. Поведение для мобильных устройств (Мультитач)
+            if (Touchscreen.current != null && Touchscreen.current.touches.Count > 0)
             {
-                if (IsPositionInsideZone(pointerPos))
+                var touches = Touchscreen.current.touches;
+                for (int i = 0; i < touches.Count; i++)
                 {
-                    StartDrawing(pointerPos);
-                }
-            }
-            else if (pointer.press.isPressed && isDrawing)
-            {
-                bool inside = IsPositionInsideZone(pointerPos);
+                    var touch = touches[i];
+                    var phase = touch.phase.ReadValue();
+                    int fingerId = touch.touchId.ReadValue();
+                    Vector2 pos = touch.position.ReadValue();
 
-                if (!inside)
-                {
-                    isOutsideZone = true;
-                    if (leadingDot != null) leadingDot.gameObject.SetActive(false);
-                }
-                else
-                {
-                    if (isOutsideZone)
+                    if (!isDrawing && phase == UnityEngine.InputSystem.TouchPhase.Began)
                     {
-                        isOutsideZone = false;
-                        if (leadingDot != null) leadingDot.gameObject.SetActive(true);
+                        // Ищем касание, которое началось именно в зоне рисования
+                        if (IsPositionInsideZone(pos))
+                        {
+                            trackedFingerId = fingerId; // Захватываем этот палец
+                            StartDrawing(pos);
+                            return;
+                        }
                     }
-                    ContinueDrawing(pointerPos);
+                    else if (isDrawing && fingerId == trackedFingerId)
+                    {
+                        // Следим только за захваченным пальцем, игнорируя остальные
+                        if (phase == UnityEngine.InputSystem.TouchPhase.Moved || phase == UnityEngine.InputSystem.TouchPhase.Stationary)
+                        {
+                            ProcessTouchMove(pos);
+                        }
+                        else if (phase == UnityEngine.InputSystem.TouchPhase.Ended || phase == UnityEngine.InputSystem.TouchPhase.Canceled)
+                        {
+                            ProcessTouchEnd();
+                            trackedFingerId = -1;
+                        }
+                        return;
+                    }
                 }
             }
-            else if (pointer.press.wasReleasedThisFrame && isDrawing)
+            // 2. Поведение для ПК (Мышка в редакторе)
+            else if (Mouse.current != null)
             {
-                if (isOutsideZone) CancelDrawing();
-                else EndDrawing();
+                var mouse = Mouse.current;
+                Vector2 pos = mouse.position.ReadValue();
+
+                if (mouse.leftButton.wasPressedThisFrame)
+                {
+                    if (IsPositionInsideZone(pos)) StartDrawing(pos);
+                }
+                else if (mouse.leftButton.isPressed && isDrawing)
+                {
+                    ProcessTouchMove(pos);
+                }
+                else if (mouse.leftButton.wasReleasedThisFrame && isDrawing)
+                {
+                    ProcessTouchEnd();
+                }
             }
+        }
+
+        // --- Вспомогательные методы для чистоты кода ---
+        private void ProcessTouchMove(Vector2 screenPos)
+        {
+            bool inside = IsPositionInsideZone(screenPos);
+
+            if (!inside)
+            {
+                isOutsideZone = true;
+                if (leadingDot != null) leadingDot.gameObject.SetActive(false);
+            }
+            else
+            {
+                if (isOutsideZone)
+                {
+                    isOutsideZone = false;
+                    if (leadingDot != null) leadingDot.gameObject.SetActive(true);
+                }
+                ContinueDrawing(screenPos);
+            }
+        }
+
+        private void ProcessTouchEnd()
+        {
+            if (isOutsideZone) CancelDrawing();
+            else EndDrawing();
         }
 
         private bool IsPositionInsideZone(Vector2 screenPos)
@@ -208,24 +256,18 @@ namespace SpellSystem.UI
 
             foreach (var result in results)
             {
-                // Игнорируем саму панель рисования (фон)
                 if (result.gameObject != null && result.gameObject != drawingZone.gameObject)
                 {
                     GameObject go = result.gameObject;
-
-                    // ИСПРАВЛЕНИЕ: Теперь мы проверяем не только стандартные кнопки (Selectable),
-                    // но и любые объекты, которые умеют нажиматься (IPointerDownHandler, IPointerClickHandler)
-                    // или перетаскиваться (IBeginDragHandler) — то есть наши кастомные слоты и джойстик!
                     if (go.GetComponentInParent<UnityEngine.UI.Selectable>() != null ||
                         go.GetComponentInParent<UnityEngine.EventSystems.IPointerDownHandler>() != null ||
                         go.GetComponentInParent<UnityEngine.EventSystems.IPointerClickHandler>() != null ||
                         go.GetComponentInParent<UnityEngine.EventSystems.IBeginDragHandler>() != null)
                     {
-                        return true; // Блокируем рисование, отдаем касание слоту
+                        return true;
                     }
                 }
             }
-
             return false;
         }
 
@@ -236,6 +278,7 @@ namespace SpellSystem.UI
             isOutsideZone = false;
             recordedGesturePoints.Clear();
             visualPoints.Clear();
+            trackedFingerId = -1;
 
             if (lineRenderer != null) lineRenderer.positionCount = 0;
             if (leadingDot != null) leadingDot.gameObject.SetActive(false);
@@ -300,8 +343,6 @@ namespace SpellSystem.UI
 
             for (int i = 0; i < visualPoints.Count; i++)
             {
-                // Постоянно пересчитываем позиции точек в мировом пространстве
-                // Так как это происходит в LateUpdate (после камеры), линия всегда будет приклеена к экрану
                 Vector3 currentWorldPos = uiCamera.ScreenToWorldPoint(new Vector3(visualPoints[i].screenPos.x, visualPoints[i].screenPos.y, zDepth));
                 lineRenderer.SetPosition(i, currentWorldPos);
             }
@@ -344,6 +385,8 @@ namespace SpellSystem.UI
             OnDrawingEnded?.Invoke();
             isDrawing = false;
             isOutsideZone = false;
+            trackedFingerId = -1;
+
             if (leadingDot != null) leadingDot.gameObject.SetActive(false);
 
             if (recordedGesturePoints.Count >= 5)

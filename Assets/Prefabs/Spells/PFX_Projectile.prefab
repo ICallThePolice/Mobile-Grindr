@@ -153,5 +153,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b4cd392bca8be7b4786e7798991ad2a7, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SpellSystem.Core.SpellProjectile
-  speed: 5
-  lifetime: 20
+  baseSpeed: 20
+  lifetime: 3
+  homingSensitivity: 10
+  autoHitDistance: 1.5

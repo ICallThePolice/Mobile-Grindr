@@ -1,7 +1,7 @@
 {
   "buildFiles": [
-    "C:\\Users\\EWALD\\Mobile_Grindr\\Library\\Bee\\Android\\Prj\\Mono2x\\Gradle\\unityLibrary\\src\\main\\cpp\\CMakeLists.txt",
-    "C:\\Users\\EWALD\\Mobile_Grindr\\Library\\Bee\\Android\\Prj\\Mono2x\\Gradle\\unityLibrary\\src\\main\\cpp\\GameActivity\\CMakeLists.txt"
+    "C:\\Users\\EWALD\\Mobile_Grindr\\Library\\Bee\\Android\\Prj\\IL2CPP\\Gradle\\unityLibrary\\src\\main\\cpp\\CMakeLists.txt",
+    "C:\\Users\\EWALD\\Mobile_Grindr\\Library\\Bee\\Android\\Prj\\IL2CPP\\Gradle\\unityLibrary\\src\\main\\cpp\\GameActivity\\CMakeLists.txt"
   ],
   "cleanCommandsComponents": [
     [
@@ -21,7 +21,7 @@
     "game::@d02bb112ea9f9c2ed29f": {
       "artifactName": "game",
       "abi": "armeabi-v7a",
-      "output": "C:\\Users\\EWALD\\Mobile_Grindr\\Library\\Bee\\Android\\Prj\\Mono2x\\Gradle\\unityLibrary\\build\\intermediates\\cxx\\RelWithDebInfo\\4037202y\\obj\\armeabi-v7a\\libgame.so",
+      "output": "C:\\Users\\EWALD\\Mobile_Grindr\\Library\\Bee\\Android\\Prj\\IL2CPP\\Gradle\\unityLibrary\\build\\intermediates\\cxx\\RelWithDebInfo\\4037202y\\obj\\armeabi-v7a\\libgame.so",
       "runtimeFiles": []
     }
   }

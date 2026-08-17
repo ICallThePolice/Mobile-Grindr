@@ -16,7 +16,7 @@ MonoBehaviour:
   energyName: 
   primaryColor: {r: 0.8792453, g: 0.091242336, b: 0.091242336, a: 1}
   trailColor: {r: 0.4264151, g: 0.013681767, b: 0, a: 1}
-  castVfxPrefab: {fileID: 0}
-  impactVfxPrefab: {fileID: 0}
+  castVfxPrefab: {fileID: 416640136850304863, guid: 8063edc31a3e4d143bf7668fe5b081ce, type: 3}
+  impactVfxPrefab: {fileID: 416640136850304863, guid: 8063edc31a3e4d143bf7668fe5b081ce, type: 3}
   baseEnergyCost: 1
   baseDamage: 1
