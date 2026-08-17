@@ -10,7 +10,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1641255509641538634}
   - component: {fileID: 8252356409635612940}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: VFX_Psy_AoE
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -59,7 +59,7 @@ GameObject:
   - component: {fileID: 7022290693514756805}
   - component: {fileID: 3979530430631915349}
   - component: {fileID: 6528400242909987922}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: Psy_Web
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -2380,7 +2380,7 @@ GameObject:
   - component: {fileID: 5634311617242654485}
   - component: {fileID: 484497948434474359}
   - component: {fileID: 7522363389867339251}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: Psy_Shards
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -4700,7 +4700,7 @@ GameObject:
   - component: {fileID: 2126436776049726157}
   - component: {fileID: 7989187886195385286}
   - component: {fileID: 6483928283695282339}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: Psy_Crystals
   m_TagString: Untagged
   m_Icon: {fileID: 0}

@@ -14,7 +14,7 @@ GameObject:
   - component: {fileID: 3229425274047687586}
   - component: {fileID: 1187647062082330011}
   - component: {fileID: 3778309260541570387}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: PFX_Projectile
   m_TagString: Untagged
   m_Icon: {fileID: 0}

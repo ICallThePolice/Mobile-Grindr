@@ -5,8 +5,15 @@ struct BiomeData
     float baseHeight;
     int biomeType;
 };
+
+struct VoxelData
+{
+    float density;
+    float3 biomeWeights;
+};
+
 StructuredBuffer<BiomeData> _BiomeData;
-RWStructuredBuffer<float> densityBuffer;
+RWStructuredBuffer<VoxelData> voxelBuffer;
 
 int3 chunkPosition;
 int3 chunkSize;
@@ -101,24 +108,21 @@ float fractalNoise(float3 pos)
     return total / maxValue;
 }
 
-// --- Умный поиск границ биомов ---
 float2 hash22(float2 p)
 {
     p = float2(dot(p, float2(127.1, 311.7)), dot(p, float2(269.5, 183.3)));
     return -1.0 + 2.0 * frac(sin(p) * 43758.5453123);
 }
 
-void getBiomeWeights(float2 pos, out uint id1, out float dist1, out uint id2, out float dist2)
+void getBiomeData(float2 pos, out uint id1, out float dist1, out uint id2, out float dist2)
 {
     float2 grid_pos = floor(pos);
     float2 frac_pos = frac(pos);
-    
     dist1 = 100.0;
     dist2 = 100.0;
     id1 = 0;
     id2 = 0;
 
-    // Расширяем поиск до 5x5, чтобы избежать артефактов на стыках
     for (int y = -2; y <= 2; y++)
     {
         for (int x = -2; x <= 2; x++)
@@ -130,13 +134,10 @@ void getBiomeWeights(float2 pos, out uint id1, out float dist1, out uint id2, ou
             
             uint currentID = 0;
             if (numBiomes > 0)
-            {
                 currentID = (uint) (abs(cell_pos.x * 15485863.0 + cell_pos.y * 32452843.0)) % (uint) numBiomes;
-            }
 
             if (d < dist1)
             {
-                // ВАЖНО: Запоминаем второй биом ТОЛЬКО если он другой стихии!
                 if (currentID != id1)
                 {
                     dist2 = dist1;
@@ -159,14 +160,14 @@ float GetBiomeDensity(BiomeData biome, float3 worldPos)
     float density = biome.baseHeight - worldPos.y;
     
     if (biome.biomeType == 0)
-    {
+    { // Vital
         float hills = fractalNoise(worldPos) * _Amplitude;
         float riverNoise = abs(snoise(float3(worldPos.x * 0.015, 0.0, worldPos.z * 0.015)));
         float rivers = smoothstep(0.0, 0.08, 0.08 - riverNoise) * 20.0;
         density += hills - rivers;
     }
     else if (biome.biomeType == 1)
-    {
+    { // Ereb
         float wasteland = fractalNoise(worldPos * 1.5) * (_Amplitude * 0.5);
         float craterNoise = snoise(float3(worldPos.x * 0.03, 0.0, worldPos.z * 0.03));
         float craters = smoothstep(0.5, 0.8, craterNoise) * 25.0;
@@ -179,18 +180,18 @@ float GetBiomeDensity(BiomeData biome, float3 worldPos)
         density += wasteland - craters + islands;
     }
     else if (biome.biomeType == 2)
-    {
+    { // Psy
         float ridges = 0.0;
-        float freq = _Frequency;
-        float amp = _Amplitude * 1.5;
+        float freq = _Frequency * 0.8;
+        float amp = _Amplitude;
         for (int i = 0; i < 3; i++)
         {
             ridges += (1.0 - abs(snoise(worldPos * freq))) * amp;
             freq *= 2.0;
             amp *= 0.5;
         }
-        float plateauHeight = biome.baseHeight + 20.0;
-        float flatten = smoothstep(plateauHeight - 5.0, plateauHeight + 5.0, worldPos.y);
+        float plateauHeight = biome.baseHeight + 15.0;
+        float flatten = smoothstep(plateauHeight - 10.0, plateauHeight + 2.0, worldPos.y);
         ridges = lerp(ridges, 0.0, flatten);
         density += ridges;
     }
@@ -209,18 +210,41 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     
     uint id1 = 0, id2 = 0;
     float dist1 = 0.0, dist2 = 0.0;
+    getBiomeData(worldPos.xz * _BiomeMapScale, id1, dist1, id2, dist2);
     
-    getBiomeWeights(worldPos.xz * _BiomeMapScale, id1, dist1, id2, dist2);
-    
+    // Вычисляем веса для смешивания (Inverse Distance Weighting)
+    float w1 = 1.0 / (pow(dist1, 4.0) + 0.0001);
+    float w2 = 1.0 / (pow(dist2, 4.0) + 0.0001);
+    float totalW = w1 + w2;
+    w1 /= totalW;
+    w2 /= totalW;
+
     float den1 = GetBiomeDensity(_BiomeData[id1], worldPos);
     float den2 = GetBiomeDensity(_BiomeData[id2], worldPos);
     
-    // Плавный градиент между двумя ближайшими биомами (зона сглаживания)
-    float blendFactor = smoothstep(0.0, 0.3, dist2 - dist1);
-    float finalDensity = lerp(den2, den1, blendFactor);
-    
+    float finalDensity = den1 * w1 + den2 * w2;
     if (worldPos.y <= 4.0)
         finalDensity = max(finalDensity, 5.0 - worldPos.y);
+
+    // Записываем ВЕСА биомов в RGB каналы (R=Vital, G=Ereb, B=Psy)
+    float3 weights = float3(0, 0, 0);
+    int type1 = _BiomeData[id1].biomeType;
+    int type2 = _BiomeData[id2].biomeType;
+
+    if (type1 == 0)
+        weights.r += w1;
+    else if (type1 == 1)
+        weights.g += w1;
+    else if (type1 == 2)
+        weights.b += w1;
+
+    if (type2 == 0)
+        weights.r += w2;
+    else if (type2 == 1)
+        weights.g += w2;
+    else if (type2 == 2)
+        weights.b += w2;
     
-    densityBuffer[index] = finalDensity;
+    voxelBuffer[index].density = finalDensity;
+    voxelBuffer[index].biomeWeights = weights;
 }

@@ -64,9 +64,21 @@ PrefabInstance:
       propertyPath: m_ConstrainProportionsScale
       value: 1
       objectReference: {fileID: 0}
+    - target: {fileID: -8391222552659086748, guid: a12d4b39f26b0d94fab32642630e316a, type: 3}
+      propertyPath: m_Layer
+      value: 7
+      objectReference: {fileID: 0}
+    - target: {fileID: -516098083770646512, guid: a12d4b39f26b0d94fab32642630e316a, type: 3}
+      propertyPath: m_Layer
+      value: 7
+      objectReference: {fileID: 0}
     - target: {fileID: 919132149155446097, guid: a12d4b39f26b0d94fab32642630e316a, type: 3}
       propertyPath: m_Name
       value: PFX_Debuff
+      objectReference: {fileID: 0}
+    - target: {fileID: 919132149155446097, guid: a12d4b39f26b0d94fab32642630e316a, type: 3}
+      propertyPath: m_Layer
+      value: 7
       objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []

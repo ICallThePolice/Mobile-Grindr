@@ -10,7 +10,7 @@ GameObject:
   m_Component:
   - component: {fileID: 5015543228920757575}
   - component: {fileID: 5090720695354657759}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: VFX_Ereb_AoE
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -58,7 +58,7 @@ GameObject:
   - component: {fileID: 7968595593402108807}
   - component: {fileID: 5348937297931311665}
   - component: {fileID: 3376259920372834605}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: Particle System
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -2383,7 +2383,7 @@ GameObject:
   - component: {fileID: 4049914889359937856}
   - component: {fileID: 7257001553675887750}
   - component: {fileID: 2658150917822526624}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: Particle System
   m_TagString: Untagged
   m_Icon: {fileID: 0}

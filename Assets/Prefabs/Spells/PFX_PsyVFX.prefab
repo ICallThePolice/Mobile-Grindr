@@ -12,7 +12,7 @@ GameObject:
   - component: {fileID: 3970180592251186933}
   - component: {fileID: 5751789827513821249}
   - component: {fileID: 4869426216481459289}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: PFX_PsyVFX
   m_TagString: Untagged
   m_Icon: {fileID: 0}

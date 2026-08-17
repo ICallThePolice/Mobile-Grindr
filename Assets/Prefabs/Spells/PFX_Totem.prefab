@@ -13,7 +13,7 @@ GameObject:
   - component: {fileID: 2996306107434901127}
   - component: {fileID: 5486001197479842304}
   - component: {fileID: 7212447866627907772}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: PFX_Totem
   m_TagString: Untagged
   m_Icon: {fileID: 0}

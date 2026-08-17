@@ -13,7 +13,7 @@ GameObject:
   - component: {fileID: 6289481880153203375}
   - component: {fileID: 45178273914342000}
   - component: {fileID: 735045715814084380}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: PFX_AoEZone
   m_TagString: Untagged
   m_Icon: {fileID: 0}

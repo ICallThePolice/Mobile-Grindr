@@ -13,6 +13,11 @@ public struct BiomeData
     public int biomeType;
 }
 
+public struct VoxelData
+{
+    public float density;
+    public Vector3 biomeWeights; // x=Vital(R), y=Ereb(G), z=Psy(B)
+}
 public class WorldManager : MonoBehaviour
 {
     public static WorldManager Instance;
@@ -161,10 +166,11 @@ public class WorldManager : MonoBehaviour
         if (activeChunks.ContainsKey(chunkCoord) || biomeDataBuffer == null) return;
 
         int numVoxels = chunkSize.x * chunkSize.y * chunkSize.z;
-        ComputeBuffer densityBuffer = new ComputeBuffer(numVoxels, sizeof(float));
+        // Заменили float на размер новой структуры VoxelData
+        ComputeBuffer voxelBuffer = new ComputeBuffer(numVoxels, System.Runtime.InteropServices.Marshal.SizeOf(typeof(VoxelData)));
         int kernel = noiseGenerator.FindKernel("CSMain");
 
-        noiseGenerator.SetBuffer(kernel, "densityBuffer", densityBuffer);
+        noiseGenerator.SetBuffer(kernel, "voxelBuffer", voxelBuffer); // Новое имя буфера
         noiseGenerator.SetBuffer(kernel, "_BiomeData", biomeDataBuffer);
 
         noiseGenerator.SetInts("chunkSize", chunkSize.x, chunkSize.y, chunkSize.z);
@@ -183,7 +189,7 @@ public class WorldManager : MonoBehaviour
         int dispatchSizeZ = Mathf.CeilToInt((float)chunkSize.z / 8);
         noiseGenerator.Dispatch(kernel, dispatchSizeX, dispatchSizeY, dispatchSizeZ);
 
-        AsyncGPUReadback.Request(densityBuffer, request => OnChunkDataReceived(request, chunkCoord, densityBuffer));
+        AsyncGPUReadback.Request(voxelBuffer, request => OnChunkDataReceived(request, chunkCoord, voxelBuffer));
     }
 
     private void OnChunkDataReceived(AsyncGPUReadbackRequest request, Vector3Int chunkCoord, ComputeBuffer buffer)
@@ -194,45 +200,48 @@ public class WorldManager : MonoBehaviour
             return;
         }
 
-        NativeArray<float> persistentDensities = new NativeArray<float>(request.GetData<float>(), Allocator.TempJob);
+        NativeArray<VoxelData> voxels = new NativeArray<VoxelData>(request.GetData<VoxelData>(), Allocator.TempJob);
         NativeList<float3> vertices = new NativeList<float3>(Allocator.TempJob);
         NativeList<int> triangles = new NativeList<int>(Allocator.TempJob);
+        NativeList<Color> vertexColors = new NativeList<Color>(Allocator.TempJob); // Новый список цветов
 
         MarchingCubesJob job = new MarchingCubesJob
         {
-            densities = persistentDensities,
+            voxels = voxels,
             chunkSize = new int3(chunkSize.x, chunkSize.y, chunkSize.z),
             isoLevel = this.isoLevel,
             vertices = vertices,
-            triangles = triangles
+            triangles = triangles,
+            vertexColors = vertexColors
         };
 
         JobHandle handle = job.Schedule();
-        StartCoroutine(ProcessMeshData(handle, chunkCoord, persistentDensities, vertices, triangles));
-
+        StartCoroutine(ProcessMeshData(handle, chunkCoord, voxels, vertices, triangles, vertexColors));
         buffer.Release();
     }
 
-    private IEnumerator ProcessMeshData(JobHandle jobHandle, Vector3Int chunkCoord, NativeArray<float> persistentDensities, NativeList<float3> vertices, NativeList<int> triangles)
+    private IEnumerator ProcessMeshData(JobHandle jobHandle, Vector3Int chunkCoord, NativeArray<VoxelData> voxels, NativeList<float3> vertices, NativeList<int> triangles, NativeList<Color> vertexColors)
     {
         yield return new WaitUntil(() => jobHandle.IsCompleted);
         jobHandle.Complete();
 
         if (vertices.Length > 3)
         {
-            CreateChunkObject(chunkCoord, vertices.AsArray(), triangles.AsArray());
+            CreateChunkObject(chunkCoord, vertices.AsArray(), triangles.AsArray(), vertexColors.AsArray());
         }
 
-        persistentDensities.Dispose();
+        voxels.Dispose();
         vertices.Dispose();
         triangles.Dispose();
+        vertexColors.Dispose();
     }
 
-    private void CreateChunkObject(Vector3Int chunkCoord, NativeArray<float3> vertices, NativeArray<int> triangles)
+    private void CreateChunkObject(Vector3Int chunkCoord, NativeArray<float3> vertices, NativeArray<int> triangles, NativeArray<Color> vertexColors)
     {
         Mesh mesh = new Mesh { indexFormat = IndexFormat.UInt32 };
         mesh.SetVertices(vertices);
         mesh.SetTriangles(triangles.ToArray(), 0);
+        mesh.SetColors(vertexColors); // ПРИМЕНЯЕМ ЦВЕТА
         mesh.RecalculateBounds();
         mesh.RecalculateNormals();
 
@@ -247,17 +256,8 @@ public class WorldManager : MonoBehaviour
         MeshCollider collider = chunkObject.AddComponent<MeshCollider>();
         collider.sharedMesh = mesh;
 
-        if (!activeChunks.ContainsKey(chunkCoord))
-        {
-            activeChunks.Add(chunkCoord, chunkObject.GetComponent<Chunk>());
-        }
-
-        // --- ЛОГИКА БЕЗОПАСНОГО СПАВНА ---
-        // Если это первый центральный чанк под игроком, спавним его
-        if (!isPlayerSpawned && chunkCoord == currentPlayerChunk)
-        {
-            StartCoroutine(SpawnPlayerSafely());
-        }
+        if (!activeChunks.ContainsKey(chunkCoord)) activeChunks.Add(chunkCoord, chunkObject.GetComponent<Chunk>());
+        if (!isPlayerSpawned && chunkCoord == currentPlayerChunk) StartCoroutine(SpawnPlayerSafely());
     }
 
     private IEnumerator SpawnPlayerSafely()

@@ -10,7 +10,7 @@ GameObject:
   m_Component:
   - component: {fileID: 1563578531192875707}
   - component: {fileID: 1602767766259397189}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: VFX_Vital_AoE
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -57,7 +57,7 @@ GameObject:
   - component: {fileID: 9155137315526350111}
   - component: {fileID: 7190854284293833948}
   - component: {fileID: 9067786180513348148}
-  m_Layer: 0
+  m_Layer: 7
   m_Name: Particle System
   m_TagString: Untagged
   m_Icon: {fileID: 0}
