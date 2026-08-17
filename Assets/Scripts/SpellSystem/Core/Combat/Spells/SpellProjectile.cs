@@ -98,7 +98,7 @@ namespace SpellSystem.Core
 
             // 2. ИГНОР ИГРОКА: Железобетонная защита по тегу и скриптам
             if (other.CompareTag("Player") ||
-                other.GetComponentInParent<MobilePlayerController>() != null ||
+                other.GetComponentInParent<PlayerMovement>() != null ||
                 other.GetComponentInParent<SpellCaster>() != null)
             {
                 return;

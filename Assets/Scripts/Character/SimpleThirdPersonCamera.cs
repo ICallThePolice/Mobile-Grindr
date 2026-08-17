@@ -4,11 +4,23 @@ namespace SpellSystem.Core
 {
     public class SimpleThirdPersonCamera : MonoBehaviour
     {
-        [Header("References")]
+        [Header("Target & References")]
         [SerializeField] private Transform player;
         [SerializeField] private Transform characterModel;
 
-        [Header("Camera Constraints")]
+        [Header("Collision Settings (Physics)")]
+        [Tooltip("Слои, с которыми камера будет сталкиваться. Поставь Default!")]
+        public LayerMask collisionMask = ~0;
+        [Tooltip("Размер физической сферы камеры. Защищает от проваливания в стены.")]
+        public float cameraRadius = 0.3f;
+        [Tooltip("Минимальная дистанция, на которую камера может подъехать к игроку при ударе о стену.")]
+        public float minDistance = 0.5f;
+
+        [Header("Manual Control Constraints")]
+        [SerializeField] private float horizontalSpeed = 150f;
+        [SerializeField] private float verticalSpeed = 100f;
+        [SerializeField] private float minPitch = -15f;
+        [SerializeField] private float maxPitch = 70f;
         [Range(45f, 60f)]
         [SerializeField] private float maxYawAngle = 45f;
 
@@ -21,23 +33,13 @@ namespace SpellSystem.Core
         [Tooltip("Плавность перелета камеры при смене цели (софт-лок)")]
         [Range(0.05f, 1f)][SerializeField] private float targetSwitchSmoothTime = 0.3f;
 
-        [Header("Combat Zoom Settings")]
+        [Header("Combat Zoom & Offset")]
         [SerializeField] private float outOfCombatZ = -4f;
         [SerializeField] private float inCombatZ = -5f;
-
-        [Header("Camera Base Settings")]
+        [SerializeField] private float minZoomDistance = 2.5f;
         [SerializeField] private Vector2 baseXYOffset = new Vector2(0f, 4f);
         [SerializeField] private float followSpeed = 15f;
         [SerializeField] private float manualResetSpeed = 4f;
-
-        [Header("Dynamic Zoom Settings")]
-        [SerializeField] private float minZoomDistance = 3.5f;
-
-        [Header("Manual Control")]
-        [SerializeField] private float horizontalSpeed = 150f;
-        [SerializeField] private float verticalSpeed = 100f;
-        [SerializeField] private float minPitch = 15f;
-        [SerializeField] private float maxPitch = 50f;
 
         [Header("Auto-Reset & Dash Settings")]
         [SerializeField] private float defaultPitch = 40f;
@@ -51,9 +53,9 @@ namespace SpellSystem.Core
 
         private Transform currentTarget;
         public Transform CurrentTarget => currentTarget;
-
         private bool isHardLocked = false;
 
+        private Vector2 lookInput;
         private float manualYawOffset = 0f;
         private float currentYaw = 0f;
         private float currentPitch = 40f;
@@ -66,11 +68,7 @@ namespace SpellSystem.Core
         private float zVelocity = 0f;
         private float focusWeightVelocity = 0f;
         private Vector3 enemyPositionVelocity = Vector3.zero;
-
-        private Vector2 lookInput;
         private Vector3 currentLookAtPoint;
-
-        // Это и есть наша "виртуальная" цель
         private Vector3 lastEnemyPosition;
 
         private float dashStartTime = 0f;
@@ -104,9 +102,7 @@ namespace SpellSystem.Core
 
         public void SetTarget(Transform newTarget, bool hardLock)
         {
-            // ИСПРАВЛЕНИЕ: Если мы захватываем цель ВПЕРВЫЕ (из пустоты), 
-            // мгновенно телепортируем виртуальную точку, чтобы камера плавно сфокусировалась
-            // без перелета через всю карту от позиции игрока.
+            // Если мы захватываем цель ВПЕРВЫЕ (из пустоты), мгновенно телепортируем виртуальную точку
             if (newTarget != null && currentTarget == null)
             {
                 lastEnemyPosition = newTarget.position;
@@ -132,42 +128,29 @@ namespace SpellSystem.Core
         {
             if (player == null) return;
 
-            // --- КИНЕМАТОГРАФИЧНАЯ СМЕНА ЦЕЛЕЙ ---
+            // --- 0. КИНЕМАТОГРАФИЧНАЯ СМЕНА ЦЕЛЕЙ ---
             if (currentTarget != null)
             {
-                // Виртуальная точка мягко перелетает от прошлого врага к новому
                 lastEnemyPosition = Vector3.SmoothDamp(lastEnemyPosition, currentTarget.position, ref enemyPositionVelocity, targetSwitchSmoothTime);
             }
 
             bool isDashCamActive = Time.time < dashEndTime && currentTarget == null;
             float dashProgress = isDashCamActive ? Mathf.Clamp01((Time.time - dashStartTime) / dashTotalDuration) : 0f;
 
-            // 1. YAW (ГОРИЗОНТАЛЬ)
+            // --- 1. YAW (ГОРИЗОНТАЛЬ) ---
             float targetBaseYaw;
             float currentSmoothTime;
 
             if (isDashCamActive)
             {
                 targetBaseYaw = dashDirection != Vector3.zero ? Quaternion.LookRotation(dashDirection).eulerAngles.y : currentYaw;
-                float easeInProgress = dashProgress * dashProgress;
-                currentSmoothTime = Mathf.Lerp(yawSmoothPeace, 0.02f, easeInProgress);
+                currentSmoothTime = Mathf.Lerp(yawSmoothPeace, 0.02f, dashProgress * dashProgress);
             }
             else if (currentTarget != null)
             {
-                // Используем виртуальную летящую точку для вычисления разворота камеры
                 Vector3 dirToTarget = lastEnemyPosition - player.position;
                 dirToTarget.y = 0;
-
-                if (dirToTarget.sqrMagnitude > 0.001f)
-                {
-                    targetBaseYaw = Quaternion.LookRotation(dirToTarget).eulerAngles.y;
-                }
-                else
-                {
-                    float charAngle = characterModel != null ? characterModel.eulerAngles.y : player.eulerAngles.y;
-                    targetBaseYaw = charAngle;
-                }
-
+                targetBaseYaw = dirToTarget.sqrMagnitude > 0.001f ? Quaternion.LookRotation(dirToTarget).eulerAngles.y : (characterModel != null ? characterModel.eulerAngles.y : player.eulerAngles.y);
                 currentSmoothTime = yawSmoothCombat;
             }
             else
@@ -176,72 +159,53 @@ namespace SpellSystem.Core
                 currentSmoothTime = yawSmoothPeace;
             }
 
-            if (Mathf.Abs(lookInput.x) > 0.05f)
-            {
-                manualYawOffset += lookInput.x * horizontalSpeed * Time.deltaTime;
-            }
-            else
-            {
-                manualYawOffset = Mathf.Lerp(manualYawOffset, 0f, manualResetSpeed * Time.deltaTime);
-            }
+            if (Mathf.Abs(lookInput.x) > 0.05f) manualYawOffset += lookInput.x * horizontalSpeed * Time.deltaTime;
+            else manualYawOffset = Mathf.Lerp(manualYawOffset, 0f, manualResetSpeed * Time.deltaTime);
+
             manualYawOffset = Mathf.Clamp(manualYawOffset, -maxYawAngle, maxYawAngle);
+            currentYaw = Mathf.SmoothDampAngle(currentYaw, targetBaseYaw + manualYawOffset, ref yawVelocity, currentSmoothTime);
 
-            float targetYaw = targetBaseYaw + manualYawOffset;
-            currentYaw = Mathf.SmoothDampAngle(currentYaw, targetYaw, ref yawVelocity, currentSmoothTime);
-
-            // 2. PITCH (ВЕРТИКАЛЬ)
-            if (Mathf.Abs(lookInput.y) > 0.05f)
-            {
-                targetPitch -= lookInput.y * verticalSpeed * Time.deltaTime;
-            }
+            // --- 2. PITCH (ВЕРТИКАЛЬ) ---
+            if (Mathf.Abs(lookInput.y) > 0.05f) targetPitch -= lookInput.y * verticalSpeed * Time.deltaTime;
             else
             {
                 float desiredPitch = isDashCamActive ? dashPitch : defaultPitch;
-                float currentPitchSpeed = isDashCamActive ? pitchReturnSpeed * 3f : pitchReturnSpeed;
-                targetPitch = Mathf.Lerp(targetPitch, desiredPitch, currentPitchSpeed * Time.deltaTime);
+                targetPitch = Mathf.Lerp(targetPitch, desiredPitch, (isDashCamActive ? pitchReturnSpeed * 3f : pitchReturnSpeed) * Time.deltaTime);
             }
             targetPitch = Mathf.Clamp(targetPitch, minPitch, maxPitch);
+            currentPitch = Mathf.SmoothDamp(currentPitch, targetPitch, ref pitchVelocity, isDashCamActive ? 0.05f : pitchSmoothTime);
 
-            float currentPitchSmooth = isDashCamActive ? 0.05f : pitchSmoothTime;
-            currentPitch = Mathf.SmoothDamp(currentPitch, targetPitch, ref pitchVelocity, currentPitchSmooth);
+            // --- 3. ИДЕАЛЬНАЯ ДИСТАНЦИЯ (ZOOM) ---
+            currentBaseZ = Mathf.SmoothDamp(currentBaseZ, currentTarget != null ? inCombatZ : outOfCombatZ, ref zVelocity, zoomSmoothTime);
+            float defaultDistance = new Vector3(baseXYOffset.x, baseXYOffset.y, currentBaseZ).magnitude;
 
-            // 3. ZOOM (ДИСТАНЦИЯ)
-            float targetZ = currentTarget != null ? inCombatZ : outOfCombatZ;
-            currentBaseZ = Mathf.SmoothDamp(currentBaseZ, targetZ, ref zVelocity, zoomSmoothTime);
+            float normalizedPitchDiff = currentPitch > defaultPitch ? (currentPitch - defaultPitch) / (maxPitch - defaultPitch) : (defaultPitch - currentPitch) / (defaultPitch - minPitch);
+            float idealDistance = Mathf.Lerp(defaultDistance, minZoomDistance, normalizedPitchDiff);
 
-            Vector3 dynamicBaseOffset = new Vector3(baseXYOffset.x, baseXYOffset.y, currentBaseZ);
-            float defaultDistance = dynamicBaseOffset.magnitude;
-
-            float normalizedPitchDiff = 0f;
-            if (currentPitch > defaultPitch)
-                normalizedPitchDiff = (currentPitch - defaultPitch) / (maxPitch - defaultPitch);
-            else if (currentPitch < defaultPitch)
-                normalizedPitchDiff = (defaultPitch - currentPitch) / (defaultPitch - minPitch);
-
-            float currentDistance = Mathf.Lerp(defaultDistance, minZoomDistance, normalizedPitchDiff);
-
-            // 4. ПРИМЕНЕНИЕ КООРДИНАТ КАМЕРЫ
+            // --- 4. КОЛЛИЗИЯ И ПОЗИЦИЯ (SphereCast) ---
             Quaternion cameraRotation = Quaternion.Euler(currentPitch, currentYaw, 0f);
             Vector3 pivotPoint = player.position + Vector3.up * playerFocusHeight;
+            Vector3 direction = cameraRotation * Vector3.back;
 
-            Vector3 targetPosition = pivotPoint + cameraRotation * new Vector3(0f, 0f, -currentDistance);
-
-            float currentFollowSpeed = isDashCamActive ? Mathf.Lerp(followSpeed, followSpeed * 2.5f, dashProgress) : followSpeed;
-            transform.position = Vector3.Lerp(transform.position, targetPosition, currentFollowSpeed * Time.deltaTime);
-
-            // 5. ФОКУС ВЗГЛЯДА
-            float currentFocusSmooth = isDashCamActive ? Mathf.Lerp(focusSmoothTime, 0.01f, dashProgress * dashProgress) : focusSmoothTime;
-            float targetFocusWeight = currentTarget != null ? focusBias : 0f;
-
-            currentFocusWeight = Mathf.SmoothDamp(currentFocusWeight, targetFocusWeight, ref focusWeightVelocity, currentFocusSmooth);
-
-            Vector3 eFocus = pivotPoint;
-            if (currentFocusWeight > 0.001f)
+            // Пускаем физический луч от игрока назад к камере
+            float actualDistance = idealDistance;
+            if (Physics.SphereCast(pivotPoint, cameraRadius, direction, out RaycastHit hit, idealDistance, collisionMask))
             {
-                // Взгляд камеры также привязан к плавно летящей виртуальной точке
-                eFocus = lastEnemyPosition + Vector3.up * enemyFocusHeight;
+                // Врезались в гору! Сокращаем дистанцию
+                actualDistance = Mathf.Clamp(hit.distance, minDistance, idealDistance);
             }
 
+            Vector3 targetPosition = pivotPoint + direction * actualDistance;
+            float currentFollowSpeed = isDashCamActive ? Mathf.Lerp(followSpeed, followSpeed * 2.5f, dashProgress) : followSpeed;
+
+            // Плавно двигаем камеру на итоговую безопасную позицию
+            transform.position = Vector3.Lerp(transform.position, targetPosition, currentFollowSpeed * Time.deltaTime);
+
+            // --- 5. ФОКУС ВЗГЛЯДА ---
+            float currentFocusSmooth = isDashCamActive ? Mathf.Lerp(focusSmoothTime, 0.01f, dashProgress * dashProgress) : focusSmoothTime;
+            currentFocusWeight = Mathf.SmoothDamp(currentFocusWeight, currentTarget != null ? focusBias : 0f, ref focusWeightVelocity, currentFocusSmooth);
+
+            Vector3 eFocus = currentFocusWeight > 0.001f ? (lastEnemyPosition + Vector3.up * enemyFocusHeight) : pivotPoint;
             currentLookAtPoint = Vector3.Lerp(pivotPoint, eFocus, currentFocusWeight);
 
             Vector3 lookDirection = currentLookAtPoint - transform.position;
