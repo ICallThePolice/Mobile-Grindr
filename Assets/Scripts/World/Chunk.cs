@@ -8,6 +8,7 @@ using UnityEngine;
 public class Chunk : MonoBehaviour
 {
     // Массив, хранящий данные о всех вокселях в этом чанке.
+    [System.NonSerialized]
     public Voxel[,,] Voxels;
 
     // Ссылки на компоненты для отображения геометрии чанка.

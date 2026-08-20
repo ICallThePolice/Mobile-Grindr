@@ -4,21 +4,29 @@ struct BiomeData
 {
     float baseHeight;
     int biomeType;
+    float pad1;
+    float pad2;
 };
 
 struct VoxelData
 {
     float density;
-    float3 biomeWeights;
+    float liquidDensity;
+    float biomeWeightR;
+    float biomeWeightG;
+    float biomeWeightB;
+    float pad1;
+    float pad2;
+    float pad3;
 };
 
 StructuredBuffer<BiomeData> _BiomeData;
 RWStructuredBuffer<VoxelData> voxelBuffer;
 
-int3 chunkPosition;
-int3 chunkSize;
-int numBiomes;
+float4 chunkPosition;
+float4 chunkSize;
 
+int numBiomes;
 float _Amplitude;
 float _Frequency;
 float _SurfaceLevel;
@@ -27,6 +35,7 @@ float _BiomeMapScale;
 #define NUM_OCTAVES 3 
 float _Lacunarity;
 float _Persistence;
+float4 _NearestCorePos; // НОВАЯ ПЕРЕМЕННАЯ: Координаты ближайшего Ядра
 
 // --- Simplex Noise ---
 float3 mod289(float3 x)
@@ -90,7 +99,7 @@ float snoise(float3 v)
     return 42.0 * dot(m * m, float4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
 }
 
-float fractalNoise(float3 pos)
+float fractalNoise(float2 pos)
 {
     float total = 0.0;
     float frequency = _Frequency;
@@ -98,7 +107,7 @@ float fractalNoise(float3 pos)
     float maxValue = 0.0;
     for (int i = 0; i < NUM_OCTAVES; i++)
     {
-        total += snoise(pos * frequency) * amplitude;
+        total += snoise(float3(pos.x * frequency, 0.0, pos.y * frequency)) * amplitude;
         maxValue += amplitude;
         amplitude *= _Persistence;
         frequency *= _Lacunarity;
@@ -108,143 +117,532 @@ float fractalNoise(float3 pos)
     return total / maxValue;
 }
 
+float smin(float a, float b, float k)
+{
+    float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+    return lerp(b, a, h) - k * h * (1.0 - h);
+}
+
+// Вороной
 float2 hash22(float2 p)
 {
     p = float2(dot(p, float2(127.1, 311.7)), dot(p, float2(269.5, 183.3)));
     return -1.0 + 2.0 * frac(sin(p) * 43758.5453123);
 }
 
-void getBiomeData(float2 pos, out uint id1, out float dist1, out uint id2, out float dist2)
+// ИСПРАВЛЕНО: Сетка поиска Вороного увеличена до 5x5! 
+// Это навсегда решит проблему обрезки спиралей на границах чанков.
+float3 getCrater(float2 pos)
 {
-    float2 grid_pos = floor(pos);
-    float2 frac_pos = frac(pos);
-    dist1 = 100.0;
-    dist2 = 100.0;
-    id1 = 0;
-    id2 = 0;
-
-    for (int y = -2; y <= 2; y++)
+    float2 p = floor(pos);
+    float2 f = frac(pos);
+    float res = 8.0;
+    float2 center = float2(0.0, 0.0);
+    for (int j = -2; j <= 2; j++)
     {
-        for (int x = -2; x <= 2; x++)
+        for (int i = -2; i <= 2; i++)
         {
-            float2 neighbor_cell = float2(x, y);
-            float2 cell_pos = grid_pos + neighbor_cell;
-            float2 random_point_offset = hash22(cell_pos);
-            float d = distance(frac_pos, neighbor_cell + random_point_offset);
-            
-            uint currentID = 0;
-            if (numBiomes > 0)
-                currentID = (uint) (abs(cell_pos.x * 15485863.0 + cell_pos.y * 32452843.0)) % (uint) numBiomes;
-
-            if (d < dist1)
+            float2 b = float2(i, j);
+            float2 h = hash22(p + b) * 0.5 + 0.5;
+            float2 r = b - f + h;
+            float d = dot(r, r);
+            if (d < res)
             {
-                if (currentID != id1)
-                {
-                    dist2 = dist1;
-                    id2 = id1;
-                }
-                dist1 = d;
-                id1 = currentID;
-            }
-            else if (d < dist2 && currentID != id1)
-            {
-                dist2 = d;
-                id2 = currentID;
+                res = d;
+                center = p + b + h;
             }
         }
     }
+    return float3(sqrt(res), center.x, center.y);
 }
 
-float GetBiomeDensity(BiomeData biome, float3 worldPos)
+// УНИВЕРСАЛЬНАЯ ЗАЩИТА
+float GetBiomeWeightAtPoint(float2 pos, int targetType)
 {
-    float density = biome.baseHeight - worldPos.y;
+    float rawNoise = snoise(float3(pos.x * _BiomeMapScale, 0.0, pos.y * _BiomeMapScale));
+    float normalizedNoise = smoothstep(-0.6, 0.6, rawNoise);
+    float biomePos = clamp(normalizedNoise, 0.0, 0.999) * (numBiomes - 1);
     
-    if (biome.biomeType == 0)
-    { // Vital
-        float hills = fractalNoise(worldPos) * _Amplitude;
-        float riverNoise = abs(snoise(float3(worldPos.x * 0.015, 0.0, worldPos.z * 0.015)));
-        float rivers = smoothstep(0.0, 0.08, 0.08 - riverNoise) * 20.0;
-        density += hills - rivers;
-    }
-    else if (biome.biomeType == 1)
-    { // Ereb
-        float wasteland = fractalNoise(worldPos * 1.5) * (_Amplitude * 0.5);
-        float craterNoise = snoise(float3(worldPos.x * 0.03, 0.0, worldPos.z * 0.03));
-        float craters = smoothstep(0.5, 0.8, craterNoise) * 25.0;
-        float islands = 0.0;
-        if (worldPos.y > biome.baseHeight + 15.0 && worldPos.y < biome.baseHeight + 45.0)
-        {
-            float islandNoise = snoise(worldPos * 0.05);
-            islands = smoothstep(0.6, 0.8, islandNoise) * 25.0;
-        }
-        density += wasteland - craters + islands;
-    }
-    else if (biome.biomeType == 2)
-    { // Psy
-        float ridges = 0.0;
-        float freq = _Frequency * 0.8;
-        float amp = _Amplitude;
-        for (int i = 0; i < 3; i++)
-        {
-            ridges += (1.0 - abs(snoise(worldPos * freq))) * amp;
-            freq *= 2.0;
-            amp *= 0.5;
-        }
-        float plateauHeight = biome.baseHeight + 15.0;
-        float flatten = smoothstep(plateauHeight - 10.0, plateauHeight + 2.0, worldPos.y);
-        ridges = lerp(ridges, 0.0, flatten);
-        density += ridges;
-    }
-    return density;
+    uint id1 = (uint) floor(biomePos);
+    uint id2 = min(id1 + 1, numBiomes - 1);
+    
+    float blend = frac(biomePos);
+    float w2 = smoothstep(0.0, 1.0, blend);
+    float w1 = 1.0 - w2;
+    
+    float w = 0.0;
+    if (_BiomeData[id1].biomeType == targetType)
+        w += w1;
+    if (_BiomeData[id2].biomeType == targetType)
+        w += w2;
+    
+    return w;
+}
+
+int GetDominantBiome(float2 pos)
+{
+    float rawNoise = snoise(float3(pos.x * _BiomeMapScale, 0.0, pos.y * _BiomeMapScale));
+    float normalizedNoise = smoothstep(-0.6, 0.6, rawNoise);
+    float biomePos = clamp(normalizedNoise, 0.0, 0.999) * (numBiomes - 1);
+    
+    uint id1 = (uint) floor(biomePos);
+    uint id2 = min(id1 + 1, numBiomes - 1);
+    float blend = frac(biomePos);
+    
+    return (blend < 0.5) ? _BiomeData[id1].biomeType : _BiomeData[id2].biomeType;
 }
 
 [numthreads(8, 8, 8)]
 void CSMain(uint3 id : SV_DispatchThreadID)
 {
-    int index = id.x + id.y * chunkSize.x + id.z * (chunkSize.x * chunkSize.y);
-    int totalVoxels = chunkSize.x * chunkSize.y * chunkSize.z;
+    int3 safeChunkSize = int3((int) chunkSize.x, (int) chunkSize.y, (int) chunkSize.z);
+    int index = id.x + id.y * safeChunkSize.x + id.z * (safeChunkSize.x * safeChunkSize.y);
+    int totalVoxels = safeChunkSize.x * safeChunkSize.y * safeChunkSize.z;
     if (index >= totalVoxels)
         return;
 
-    float3 worldPos = float3(id) + float3(chunkPosition * (chunkSize - 1));
+    float3 worldPos = float3(id) + (chunkPosition.xyz * (chunkSize.xyz - 1.0));
     
-    uint id1 = 0, id2 = 0;
-    float dist1 = 0.0, dist2 = 0.0;
-    getBiomeData(worldPos.xz * _BiomeMapScale, id1, dist1, id2, dist2);
+    // === УБИЙЦА СИНГУЛЯРНОСТИ ===
+    // Искусственно смещаем координаты генерации на 15 сантиметров. 
+    // Это обманывает математику шума, не позволяя ей получить идеальные (0,0,0) 
+    // в центре мира, из-за которых генерируется бесконечная игла.
+    worldPos.xz += float2(0.15, 0.15);
     
-    // Вычисляем веса для смешивания (Inverse Distance Weighting)
-    float w1 = 1.0 / (pow(dist1, 4.0) + 0.0001);
-    float w2 = 1.0 / (pow(dist2, 4.0) + 0.0001);
-    float totalW = w1 + w2;
-    w1 /= totalW;
-    w2 /= totalW;
+    float2 pos2D = worldPos.xz;
+    
+    // 1. КАРТА БИОМОВ
+    float rawNoise = snoise(float3(pos2D.x * _BiomeMapScale, 0.0, pos2D.y * _BiomeMapScale));
+    float normalizedNoise = smoothstep(-0.6, 0.6, rawNoise);
+    float biomePos = clamp(normalizedNoise, 0.0, 0.999) * (numBiomes - 1);
+    
+    uint id1 = (uint) floor(biomePos);
+    uint id2 = min(id1 + 1, numBiomes - 1);
+    
+    float blend = frac(biomePos);
+    float w2 = smoothstep(0.0, 1.0, blend);
+    float w1 = 1.0 - w2;
 
-    float den1 = GetBiomeDensity(_BiomeData[id1], worldPos);
-    float den2 = GetBiomeDensity(_BiomeData[id2], worldPos);
+    float h1 = _BiomeData[id1].baseHeight;
+    float h2 = _BiomeData[id2].baseHeight;
+    float baseHeight = h1 * w1 + h2 * w2;
+
+    float offset1 = 0.0;
+    float liq1 = -999.0;
+    float isl1 = -999.0;
+    int type1 = _BiomeData[id1].biomeType;
+
+    float offset2 = 0.0;
+    float liq2 = -999.0;
+    float isl2 = -999.0;
+    int type2 = _BiomeData[id2].biomeType;
+
+    // --- ОПТИМИЗАЦИЯ ЭРЕБА ---
+    float3 craterData = float3(0.0, 0.0, 0.0);
+    float craterErebWeight = 0.0;
     
-    float finalDensity = den1 * w1 + den2 * w2;
+    if (type1 == 1 || type2 == 1)
+    {
+        craterData = getCrater(pos2D * 0.015);
+        float2 craterCenterWorld = craterData.yz / 0.015;
+        craterErebWeight = GetBiomeWeightAtPoint(craterCenterWorld, 1);
+    }
+
+    // --- БИОМ 1 ---
+    if (type1 == 0) // VITAL
+    {
+        // 1. СГЛАЖИВАНИЕ ХОЛМОВ: Пропускаем шум через smoothstep для создания плавных склонов
+        float rawHills = (fractalNoise(pos2D) + 1.0) * 0.5;
+        float hills = smoothstep(0.1, 0.9, rawHills) * 12.0;
+        
+        // 2. ОТВЕСНЫЕ РЕКИ (U-образный каньон)
+        float riverNoise = abs(snoise(float3(pos2D.x * 0.015, 0.0, pos2D.y * 0.015)));
+        // === ИСПРАВЛЕНИЕ ФОРМЫ КАНЬОНА ===
+        // Было: 0.015 -> 0.035 (узкое V-образное дно)
+        // Стало: 0.03 -> 0.06 (широкое плоское дно U-формы, в котором капсула не застрянет)
+        float riverTrench = (1.0 - smoothstep(0.03, 0.06, riverNoise)) * 9.0;
+        
+        offset1 = hills - riverTrench;
+        // Опускаем уровень жидкости глубже в каньон, чтобы берега казались еще выше
+        liq1 = h1 - 4.5;
+    }
+    else if (type1 == 1) // EREB
+    {
+        float wasteland = (fractalNoise(pos2D * 1.5) + 1.0) * 0.5 * 3.0;
+        float dist = craterData.x;
+        float craterMask = 1.0 - smoothstep(0.0, 0.55, dist);
+        
+        float t1 = smoothstep(0.05, 0.15, craterMask);
+        float t2 = smoothstep(0.40, 0.50, craterMask);
+        float t3 = smoothstep(0.75, 0.85, craterMask);
+        float craterDepth = (t1 + t2 + t3) * 4.0;
+        
+        float rim = smoothstep(0.0, 0.15, craterMask) * (1.0 - smoothstep(0.15, 0.3, craterMask)) * 3.0;
+        
+        offset1 = wasteland + rim - craterDepth;
+        liq1 = h1 - 11.5;
+
+        // Расширили поиск геометрии еще больше, так как спираль широкая
+        if (craterErebWeight > 0.8 && dist < 1.85)
+        {
+            // 1. ОСТРОВ (3 ЯРУСА)
+            float islandTop = h1 + 60.0 + wasteland + rim;
+            float tier1 = smoothstep(0.01, 0.1, craterMask);
+            float tier2 = smoothstep(0.3, 0.45, craterMask);
+            float tier3 = smoothstep(0.65, 0.85, craterMask);
+            
+            float islandThickness = (tier1 * 4.0) + (tier2 * 4.0) + (tier3 * 4.0);
+            float islandBottom = islandTop - islandThickness;
+            
+            float distTop = islandTop - worldPos.y;
+            float distBot = worldPos.y - islandBottom;
+            
+            isl1 = smin(distTop, distBot, 3.0);
+            isl1 -= smoothstep(0.4, 0.55, dist) * 20.0;
+
+            float groundLevel = h1 + wasteland + rim - craterDepth;
+            float2 craterCenterWorld = craterData.yz / 0.015;
+
+            // --- СЛОЙ 1: КРУПНЫЕ СПИРАЛИ ---
+            float start1 = groundLevel;
+            float end1 = islandTop + 30.0;
+            float prog1 = clamp((worldPos.y - start1) / (end1 - start1), 0.0, 1.0);
+
+            float scatter1 = (1.0 - prog1) * 32.0;
+            float2 offset1 = float2(sin(worldPos.y * 0.1), cos(worldPos.y * 0.1)) * scatter1;
+            float angle1 = atan2((worldPos.z + offset1.y) - craterCenterWorld.y, (worldPos.x + offset1.x) - craterCenterWorld.x + 0.0001);
+            float normAngle1 = angle1 / (2.0 * 3.14159265) + 0.5;
+
+            float turn1 = worldPos.y / 55.0;
+            turn1 += smoothstep(islandTop - 10.0, end1, worldPos.y) * 2.5;
+            float spiralDist1 = abs(frac((turn1 - normAngle1) * 2.0) - 0.5);
+            // Исправлен математический артефакт
+            float spiralMask1 = 1.0 - smoothstep(0.02, lerp(0.45, 0.12, prog1), spiralDist1);
+
+            // ИСПРАВЛЕНИЕ: Меньше частота (крупные камни).
+            float freq1 = lerp(0.12, 0.04, prog1);
+            float noise1 = snoise(float3(worldPos.x * freq1, worldPos.y * freq1, worldPos.z * freq1));
+            // ИСПРАВЛЕНИЕ: Выше порог (меньше плотность внизу на 20%).
+            float thresh1 = lerp(0.85, 0.35, prog1);
+            // Множитель х40, чтобы оставшиеся камни были толстыми глыбами
+            float density1 = ((noise1 * 0.5 + 0.5) - thresh1) * 40.0;
+
+            float spread1 = prog1 * 0.7;
+            float ringIn1 = spread1;
+            float ringOut1 = ringIn1 + lerp(1.2, 0.3, prog1);
+            // Исправлен математический артефакт колец
+            float ring1 = (1.0 - smoothstep(ringOut1 - 0.2, ringOut1, dist)) * smoothstep(ringIn1, ringIn1 + 0.2, dist);
+
+            float hM1_1 = smoothstep(start1, start1 + 15.0, worldPos.y);
+            float hM1_2 = 1.0 - smoothstep(end1 - 10.0, end1, worldPos.y);
+            density1 -= (1.0 - spiralMask1) * 40.0;
+            density1 -= (1.0 - ring1) * 40.0;
+            density1 -= (1.0 - (hM1_1 * hM1_2)) * 40.0;
+
+            // --- СЛОЙ 2: МЕЛКИЕ СПИРАЛИ ---
+            float start2 = groundLevel + 18.0;
+            float end2 = islandTop + 30.0;
+            float prog2 = clamp((worldPos.y - start2) / (end2 - start2), 0.0, 1.0);
+
+            float scatter2 = (1.0 - prog2) * 22.0;
+            float2 offset2 = float2(cos(worldPos.y * 0.15), sin(worldPos.y * 0.15)) * scatter2;
+            float angle2 = atan2((worldPos.z + offset2.y) - craterCenterWorld.y, (worldPos.x + offset2.x) - craterCenterWorld.x + 0.0001);
+            float normAngle2 = angle2 / (2.0 * 3.14159265) + 0.5;
+
+            float turn2 = worldPos.y / 45.0;
+            turn2 += smoothstep(islandTop - 10.0, end2, worldPos.y) * 2.5;
+            float spiralDist2 = abs(frac((turn2 - normAngle2) * 2.0) - 0.5);
+            float spiralMask2 = 1.0 - smoothstep(0.02, 0.3, spiralDist2);
+
+            // Крупнее мелкие камни
+            float freq2 = lerp(0.20, 0.08, prog2);
+            float noise2 = snoise(float3(worldPos.x * freq2, worldPos.y * freq2, worldPos.z * freq2));
+            // ИСПРАВЛЕНИЕ: Жесткий порог от крошки
+            float thresh2 = lerp(0.88, 0.45, prog2);
+            float density2 = ((noise2 * 0.5 + 0.5) - thresh2) * 40.0;
+
+            float spread2 = prog2 * 0.5;
+            float ringIn2 = 0.05 + spread2;
+            float ringOut2 = ringIn2 + 0.8;
+            float ring2 = (1.0 - smoothstep(ringOut2 - 0.2, ringOut2, dist)) * smoothstep(ringIn2, ringIn2 + 0.2, dist);
+
+            float hM2_1 = smoothstep(start2, start2 + 15.0, worldPos.y);
+            float hM2_2 = 1.0 - smoothstep(end2 - 10.0, end2, worldPos.y);
+            density2 -= (1.0 - spiralMask2) * 40.0;
+            density2 -= (1.0 - ring2) * 40.0;
+            density2 -= (1.0 - (hM2_1 * hM2_2)) * 40.0;
+
+            isl1 = max(isl1, max(density1, density2));
+        }
+    }
+    else if (type1 == 2) // PSY
+    {
+        float ridges = 0.0;
+        float freq = _Frequency * 0.8;
+        float amp = 15.0;
+        for (int i = 0; i < 3; i++)
+        {
+            ridges += (1.0 - abs(snoise(float3(pos2D.x * freq, 0.0, pos2D.y * freq)))) * amp;
+            freq *= 2.0;
+            amp *= 0.5;
+        }
+        float plateau = smin(ridges, 12.0, 2.0);
+        
+        float plateauMask = smoothstep(10.0, 11.8, plateau);
+        float2 gridPos = abs(frac(pos2D * 0.04 + 0.5) - 0.5);
+        float manhattanDist = max(gridPos.x, gridPos.y);
+        float squareRings = smoothstep(0.35, 0.48, abs(sin(manhattanDist * 100.0)));
+        
+        float mazeBreaks = smoothstep(0.0, 0.2, snoise(float3(pos2D.x * 0.08, 0.0, pos2D.y * 0.08)));
+        float radialDist = length(gridPos);
+        float nodes = smoothstep(0.85, 1.0, abs(sin(radialDist * 60.0))) * (1.0 - smoothstep(0.15, 0.2, radialDist));
+        float labyrinthPattern = max(squareRings * mazeBreaks, nodes);
+
+        offset1 = plateau + (labyrinthPattern * plateauMask * 4.0);
+        liq1 = -999.0;
+    }
+    
+    // --- БИОМ 2 ---
+    if (type2 == 0) // VITAL
+    {
+        float rawHills = (fractalNoise(pos2D) + 1.0) * 0.5;
+        float hills = smoothstep(0.1, 0.9, rawHills) * 12.0;
+        
+        float riverNoise = abs(snoise(float3(pos2D.x * 0.015, 0.0, pos2D.y * 0.015)));
+        float riverTrench = (1.0 - smoothstep(0.015, 0.035, riverNoise)) * 9.0;
+        
+        offset2 = hills - riverTrench;
+        liq2 = h2 - 4.5;
+    }
+    else if (type2 == 1) // EREB
+    {
+        float wasteland = (fractalNoise(pos2D * 1.5) + 1.0) * 0.5 * 3.0;
+        float dist = craterData.x;
+        float craterMask = 1.0 - smoothstep(0.0, 0.55, dist);
+        
+        float t1 = smoothstep(0.05, 0.15, craterMask);
+        float t2 = smoothstep(0.40, 0.50, craterMask);
+        float t3 = smoothstep(0.75, 0.85, craterMask);
+        float craterDepth = (t1 + t2 + t3) * 4.0;
+        
+        float rim = smoothstep(0.0, 0.15, craterMask) * (1.0 - smoothstep(0.15, 0.3, craterMask)) * 3.0;
+        
+        offset2 = wasteland + rim - craterDepth;
+        liq2 = h2 - 11.5;
+
+        if (craterErebWeight > 0.8 && dist < 1.85)
+        {
+            float islandTop = h2 + 60.0 + wasteland + rim;
+            float tier1 = smoothstep(0.01, 0.1, craterMask);
+            float tier2 = smoothstep(0.3, 0.45, craterMask);
+            float tier3 = smoothstep(0.65, 0.85, craterMask);
+            
+            float islandThickness = (tier1 * 4.0) + (tier2 * 4.0) + (tier3 * 4.0);
+            float islandBottom = islandTop - islandThickness;
+            
+            float distTop = islandTop - worldPos.y;
+            float distBot = worldPos.y - islandBottom;
+            
+            isl2 = smin(distTop, distBot, 3.0);
+            isl2 -= smoothstep(0.4, 0.55, dist) * 20.0;
+
+            float groundLevel = h2 + wasteland + rim - craterDepth;
+            float2 craterCenterWorld = craterData.yz / 0.015;
+
+            float start1 = groundLevel;
+            float end1 = islandTop + 30.0;
+            float prog1 = clamp((worldPos.y - start1) / (end1 - start1), 0.0, 1.0);
+
+            float scatter1 = (1.0 - prog1) * 32.0;
+            float2 offset1 = float2(sin(worldPos.y * 0.1), cos(worldPos.y * 0.1)) * scatter1;
+            float angle1 = atan2((worldPos.z + offset1.y) - craterCenterWorld.y, (worldPos.x + offset1.x) - craterCenterWorld.x + 0.0001);
+            float normAngle1 = angle1 / (2.0 * 3.14159265) + 0.5;
+
+            float turn1 = worldPos.y / 55.0;
+            turn1 += smoothstep(islandTop - 10.0, end1, worldPos.y) * 2.5;
+            float spiralDist1 = abs(frac((turn1 - normAngle1) * 2.0) - 0.5);
+            float spiralMask1 = 1.0 - smoothstep(0.02, lerp(0.45, 0.12, prog1), spiralDist1);
+
+            float freq1 = lerp(0.12, 0.04, prog1);
+            float noise1 = snoise(float3(worldPos.x * freq1, worldPos.y * freq1, worldPos.z * freq1));
+            float thresh1 = lerp(0.85, 0.35, prog1);
+            float density1 = ((noise1 * 0.5 + 0.5) - thresh1) * 40.0;
+
+            float spread1 = prog1 * 0.7;
+            float ringIn1 = spread1;
+            float ringOut1 = ringIn1 + lerp(1.2, 0.3, prog1);
+            float ring1 = (1.0 - smoothstep(ringOut1 - 0.2, ringOut1, dist)) * smoothstep(ringIn1, ringIn1 + 0.2, dist);
+
+            float hM1_1 = smoothstep(start1, start1 + 15.0, worldPos.y);
+            float hM1_2 = 1.0 - smoothstep(end1 - 10.0, end1, worldPos.y);
+            density1 -= (1.0 - spiralMask1) * 40.0;
+            density1 -= (1.0 - ring1) * 40.0;
+            density1 -= (1.0 - (hM1_1 * hM1_2)) * 40.0;
+
+            float start2 = groundLevel + 18.0;
+            float end2 = islandTop + 30.0;
+            float prog2 = clamp((worldPos.y - start2) / (end2 - start2), 0.0, 1.0);
+
+            float scatter2 = (1.0 - prog2) * 22.0;
+            float2 offset2 = float2(cos(worldPos.y * 0.15), sin(worldPos.y * 0.15)) * scatter2;
+            float angle2 = atan2((worldPos.z + offset2.y) - craterCenterWorld.y, (worldPos.x + offset2.x) - craterCenterWorld.x + 0.0001);
+            float normAngle2 = angle2 / (2.0 * 3.14159265) + 0.5;
+
+            float turn2 = worldPos.y / 45.0;
+            turn2 += smoothstep(islandTop - 10.0, end2, worldPos.y) * 2.5;
+            float spiralDist2 = abs(frac((turn2 - normAngle2) * 2.0) - 0.5);
+            float spiralMask2 = 1.0 - smoothstep(0.02, 0.3, spiralDist2);
+
+            float freq2 = lerp(0.20, 0.08, prog2);
+            float noise2 = snoise(float3(worldPos.x * freq2, worldPos.y * freq2, worldPos.z * freq2));
+            float thresh2 = lerp(0.88, 0.45, prog2);
+            float density2 = ((noise2 * 0.5 + 0.5) - thresh2) * 40.0;
+
+            float spread2 = prog2 * 0.5;
+            float ringIn2 = 0.05 + spread2;
+            float ringOut2 = ringIn2 + 0.8;
+            float ring2 = (1.0 - smoothstep(ringOut2 - 0.2, ringOut2, dist)) * smoothstep(ringIn2, ringIn2 + 0.2, dist);
+
+            float hM2_1 = smoothstep(start2, start2 + 15.0, worldPos.y);
+            float hM2_2 = 1.0 - smoothstep(end2 - 10.0, end2, worldPos.y);
+            density2 -= (1.0 - spiralMask2) * 40.0;
+            density2 -= (1.0 - ring2) * 40.0;
+            density2 -= (1.0 - (hM2_1 * hM2_2)) * 40.0;
+
+            isl2 = max(isl2, max(density1, density2));
+        }
+    }
+    else if (type2 == 2) // PSY
+    {
+        float ridges = 0.0;
+        float freq = _Frequency * 0.8;
+        float amp = 15.0;
+        for (int i = 0; i < 3; i++)
+        {
+            ridges += (1.0 - abs(snoise(float3(pos2D.x * freq, 0.0, pos2D.y * freq)))) * amp;
+            freq *= 2.0;
+            amp *= 0.5;
+        }
+        float plateau = smin(ridges, 12.0, 2.0);
+        
+        float plateauMask = smoothstep(10.0, 11.8, plateau);
+        float2 gridPos = abs(frac(pos2D * 0.04 + 0.5) - 0.5);
+        float manhattanDist = max(gridPos.x, gridPos.y);
+        float squareRings = smoothstep(0.35, 0.48, abs(sin(manhattanDist * 100.0)));
+        
+        float mazeBreaks = smoothstep(0.0, 0.2, snoise(float3(pos2D.x * 0.08, 0.0, pos2D.y * 0.08)));
+        float radialDist = length(gridPos);
+        float nodes = smoothstep(0.85, 1.0, abs(sin(radialDist * 60.0))) * (1.0 - smoothstep(0.15, 0.2, radialDist));
+        float labyrinthPattern = max(squareRings * mazeBreaks, nodes);
+
+        offset2 = plateau + (labyrinthPattern * plateauMask * 4.0);
+        liq2 = -999.0;
+    }
+
+    // 4. ФИНАЛЬНАЯ ПЛОТНОСТЬ ЗЕМЛИ
+    float finalTerrainHeight = baseHeight + (offset1 * w1) + (offset2 * w2);
+    
+    // --- ПЕРЕХОД ПСАЙ (СТУПЕНИ / ТЕРРАСЫ) ---
+    float psyWeight = 0.0;
+    if (type1 == 2)
+        psyWeight += w1;
+    if (type2 == 2)
+        psyWeight += w2;
+
+    if (psyWeight > 0.01)
+    {
+        float stepSize = 2.5;
+        float baseH = floor(finalTerrainHeight / stepSize) * stepSize;
+        float fractH = frac(finalTerrainHeight / stepSize);
+        
+        float stepRamp = smoothstep(0.7, 1.0, fractH);
+        float terracedHeight = baseH + stepRamp * stepSize;
+        
+        float terraceInfluence = smoothstep(0.1, 0.8, psyWeight);
+        finalTerrainHeight = lerp(finalTerrainHeight, terracedHeight, terraceInfluence);
+    }
+
+    finalTerrainHeight += (pos2D.x * 0.002 + pos2D.y * 0.002);
+
+    float finalDensity = finalTerrainHeight - worldPos.y;
+    
+    float finalIslandDensity = max(isl1, isl2);
+    finalDensity = max(finalDensity, finalIslandDensity);
+    
     if (worldPos.y <= 4.0)
         finalDensity = max(finalDensity, 5.0 - worldPos.y);
 
-    // Записываем ВЕСА биомов в RGB каналы (R=Vital, G=Ereb, B=Psy)
-    float3 weights = float3(0, 0, 0);
-    int type1 = _BiomeData[id1].biomeType;
-    int type2 = _BiomeData[id2].biomeType;
+    // 5. ФИНАЛЬНАЯ ПЛОТНОСТЬ ЖИДКОСТЕЙ
+    float finalLiquidDensity = -999.0;
+    float dominantLiq = (w1 >= w2) ? liq1 : liq2;
+    
+    if (dominantLiq > -500.0)
+    {
+        float bulge = smoothstep(0.5, 1.0, max(w1, w2)) * 1.5;
+        finalLiquidDensity = (dominantLiq + bulge) - worldPos.y;
+    }
+    
+    // === ГЕНЕРАЦИЯ ЯДЕР БИОМОВ ===
+    float coreDist = distance(pos2D, _NearestCorePos.xy);
+    int coreBiome = GetDominantBiome(_NearestCorePos.xy);
+
+    // Если Ядро принадлежит Эребу и мы находимся в радиусе 300 юнитов от него
+    if (coreBiome == 1 && coreDist < 300.0)
+    {
+        // 1. Выкапываем огромную чашу (глубина 45 юнитов)
+        float craterDepth = 45.0;
+        float bowl = smoothstep(0.0, 150.0, coreDist);
+        float craterShape = (1.0 - bowl) * -craterDepth;
+        
+        // 2. Высокий скалистый вал вокруг кратера (чтобы жижа не выливалась)
+        float rim = smoothstep(120.0, 160.0, coreDist) * (1.0 - smoothstep(160.0, 240.0, coreDist)) * 30.0;
+        
+        // 3. Рваные края (чтобы кратер не был идеально круглой формы)
+        float craterNoise = snoise(float3(pos2D.x * 0.06, 0.0, pos2D.y * 0.06)) * 6.0;
+        
+        float grandCraterOffset = craterShape + rim + craterNoise;
+        
+        // 4. Плавное слияние кратера с остальным миром на краях (от 200 до 300 юнитов)
+        float blendCore = 1.0 - smoothstep(200.0, 300.0, coreDist);
+        
+        // Переписываем финальную высоту земли!
+        finalTerrainHeight += grandCraterOffset * blendCore;
+        finalDensity = finalTerrainHeight - worldPos.y;
+        
+        // 5. Затапливаем дно кратера Жижей Эреба
+        if (coreDist < 160.0)
+        {
+            float liqLevel = baseHeight - 15.0; // Уровень жижи (глубоко внизу)
+            finalLiquidDensity = max(finalLiquidDensity, liqLevel - worldPos.y);
+        }
+    }
+
+    // 6. ВЕСА И ПАДДИНГИ
+    float weightR = 0.0;
+    float weightG = 0.0;
+    float weightB = 0.0;
 
     if (type1 == 0)
-        weights.r += w1;
+        weightR += w1;
     else if (type1 == 1)
-        weights.g += w1;
+        weightG += w1;
     else if (type1 == 2)
-        weights.b += w1;
+        weightB += w1;
 
     if (type2 == 0)
-        weights.r += w2;
+        weightR += w2;
     else if (type2 == 1)
-        weights.g += w2;
+        weightG += w2;
     else if (type2 == 2)
-        weights.b += w2;
+        weightB += w2;
     
     voxelBuffer[index].density = finalDensity;
-    voxelBuffer[index].biomeWeights = weights;
+    voxelBuffer[index].liquidDensity = finalLiquidDensity;
+    voxelBuffer[index].biomeWeightR = weightR;
+    voxelBuffer[index].biomeWeightG = weightG;
+    voxelBuffer[index].biomeWeightB = weightB;
+    
+    voxelBuffer[index].pad1 = 0.0;
+    voxelBuffer[index].pad2 = 0.0;
+    voxelBuffer[index].pad3 = 0.0;
 }

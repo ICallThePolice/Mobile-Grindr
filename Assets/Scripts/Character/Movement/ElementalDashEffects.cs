@@ -173,6 +173,7 @@ namespace SpellSystem.Core
         }
 
         // --- ЛОГИКА VITAL ---
+        // --- ЛОГИКА VITAL ---
         private IEnumerator VitalBoostRoutine()
         {
             bool isEnemyNear = false;
@@ -187,16 +188,16 @@ namespace SpellSystem.Core
             }
 
             float mult = isEnemyNear ? vitalEnhancedMultiplier : vitalBaseMultiplier;
-            playerMovement.moveSpeed = playerMovement.OriginalMoveSpeed * mult;
+            playerMovement.speedMultiplier = mult;
 
             yield return new WaitForSeconds(vitalBoostDuration);
-            playerMovement.moveSpeed = playerMovement.OriginalMoveSpeed;
+            playerMovement.speedMultiplier = 1f;
         }
 
         // --- ЛОГИКА EREB ---
         private IEnumerator ErebBoostRoutine()
         {
-            playerMovement.moveSpeed = playerMovement.OriginalMoveSpeed * erebSpeedMultiplier;
+            playerMovement.speedMultiplier = erebSpeedMultiplier;
             SetErebMaterial(true);
 
             float startTime = Time.time;
@@ -213,7 +214,7 @@ namespace SpellSystem.Core
             }
 
             SetErebMaterial(false);
-            playerMovement.moveSpeed = playerMovement.OriginalMoveSpeed;
+            playerMovement.speedMultiplier = 1f;
         }
 
         private void ApplyErebDamage()
